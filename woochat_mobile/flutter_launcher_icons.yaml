@@ -1,0 +1,16 @@
+# Launcher icons, generated from the wolf mark cut out of the Woo Chat
+# wordmark. Regenerate the sources with `dart run tool/make_app_icon.dart`,
+# then the platform assets with `dart run flutter_launcher_icons`.
+flutter_launcher_icons:
+  image_path: assets/branding/app_icon.png
+  android: true
+  ios: true
+  # iOS rejects alpha in the App Store icon; the source is opaque anyway.
+  remove_alpha_ios: true
+  adaptive_icon_background: "#161717"
+  adaptive_icon_foreground: assets/branding/app_icon_foreground.png
+  web:
+    generate: true
+    image_path: assets/branding/app_icon.png
+    background_color: "#161717"
+    theme_color: "#161717"

@@ -1,0 +1,40 @@
+{
+  // Without these toolArgs the app builds with empty String.fromEnvironment
+  // values and boots straight to the "Configuration missing" screen, because
+  // SUPABASE_URL / SUPABASE_ANON_KEY are compile-time dart-defines.
+  //
+  // Each developer creates env.json locally (git-ignored) from env.example.json.
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "woochat_mobile (Chrome)",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/main.dart",
+      "deviceId": "chrome",
+      "toolArgs": [
+        "--dart-define-from-file=assets/env/env.json",
+        "--web-port=8099"
+      ]
+    },
+    {
+      "name": "woochat_mobile (device / emulator)",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/main.dart",
+      "toolArgs": [
+        "--dart-define-from-file=assets/env/env.json"
+      ]
+    },
+    {
+      "name": "woochat_mobile (profile)",
+      "request": "launch",
+      "type": "dart",
+      "flutterMode": "profile",
+      "program": "lib/main.dart",
+      "toolArgs": [
+        "--dart-define-from-file=assets/env/env.json"
+      ]
+    }
+  ]
+}
