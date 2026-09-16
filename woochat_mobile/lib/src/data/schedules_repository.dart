@@ -9,6 +9,8 @@ class ScheduledChatIds {
     this.failed = const <String>{},
     this.failedActive = const <String>{},
     this.failedCount = 0,
+    this.ecosystem = const <String>{},
+    this.ecosystemWaiting = 0,
   });
 
   /// Every chat with a scheduled send.
@@ -20,6 +22,12 @@ class ScheduledChatIds {
   final Set<String> failed;
   final Set<String> failedActive;
   final int failedCount;
+
+  /// Chats with a send Meta is holding back under the customer's marketing
+  /// cap (131049). The sender re-queues these itself, twelve hours apart,
+  /// so they are waiting rather than failed.
+  final Set<String> ecosystem;
+  final int ecosystemWaiting;
 
   static const ScheduledChatIds empty = ScheduledChatIds();
 
@@ -73,6 +81,8 @@ class SchedulesRepository {
       failed: ids('failed'),
       failedActive: ids('failed_active'),
       failedCount: (map['failed_count'] as num?)?.toInt() ?? 0,
+      ecosystem: ids('ecosystem'),
+      ecosystemWaiting: (map['ecosystem_waiting'] as num?)?.toInt() ?? 0,
     );
   }
 }

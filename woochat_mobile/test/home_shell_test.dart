@@ -32,13 +32,19 @@ void main() {
     );
   });
 
-  test('only Chats is enabled in Phase 1', () {
+  test('Chats is the only screen; More opens a sheet', () {
     final enabled = HomeNavBar.destinations
         .where((destination) => destination.enabled)
         .map((destination) => destination.label)
         .toList();
 
-    expect(enabled, <String>['Chats']);
+    expect(enabled, <String>['Chats', 'More']);
+    expect(
+      HomeNavBar.destinations.where((d) => d.opensSheet).map((d) => d.label),
+      <String>['More'],
+    );
+    // More is never the highlighted tab — it opens over whatever is shown.
+    expect(HomeNavBar.destinations[HomeNavBar.activeIndex].label, 'Chats');
   });
 
   testWidgets('Chats renders first and highlighted', (tester) async {

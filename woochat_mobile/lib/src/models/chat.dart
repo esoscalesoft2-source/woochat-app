@@ -20,6 +20,8 @@ class Chat {
     this.lastAutomationId,
     this.lastAutomationTriggeredAt,
     this.lastAdHeadline,
+    this.lastAdThumbnailUrl,
+    this.assignedTo,
   });
 
   final String id;
@@ -47,13 +49,19 @@ class Chat {
   /// resolves to a product.
   final String? lastAdHeadline;
 
+  /// Thumbnail of that ad, shown beside the headline on the list row.
+  final String? lastAdThumbnailUrl;
+
+  /// The team member this chat is assigned to, or null when unassigned.
+  final String? assignedTo;
+
   /// Columns this app reads. Explicit so we never over-select.
   static const String selectColumns = '''
 id, user_id, contact_name, contact_phone, profile_photo_url,
 is_archived, is_pinned, is_unread, unread_count,
 last_message, last_message_at, last_message_direction, last_message_status,
 last_inbound_at, last_automation_id, last_automation_triggered_at,
-last_ad_headline
+last_ad_headline, last_ad_thumbnail_url, assigned_to
 ''';
 
   factory Chat.fromMap(Map<String, dynamic> map) {
@@ -76,6 +84,8 @@ last_ad_headline
       lastAutomationTriggeredAt:
           _parseDate(map['last_automation_triggered_at']),
       lastAdHeadline: map['last_ad_headline'] as String?,
+      lastAdThumbnailUrl: map['last_ad_thumbnail_url'] as String?,
+      assignedTo: map['assigned_to'] as String?,
     );
   }
 
@@ -99,16 +109,21 @@ last_ad_headline
         lastAutomationId: lastAutomationId,
         lastAutomationTriggeredAt: lastAutomationTriggeredAt,
         lastAdHeadline: lastAdHeadline,
+        lastAdThumbnailUrl: lastAdThumbnailUrl,
+        assignedTo: assignedTo,
       );
 
   /// Falls back to the phone number when the contact has no saved name.
   String get displayName {
     final name = contactName?.trim();
     if (name != null && name.isNotEmpty) return name;
-    final phone = contactPhone?.trim();
-    if (phone != null && phone.isNotEmpty) return phone;
+    final phone = displayPhone(contactPhone);
+    if (phone.isNotEmpty) return phone;
     return 'Unknown contact';
   }
+
+  /// The number as every screen shows it — see [displayPhone].
+  String get shownPhone => displayPhone(contactPhone);
 
   String get initials {
     final source = displayName.trim();
@@ -135,6 +150,28 @@ last_ad_headline
       (value ?? '').replaceAll(RegExp(r'[^0-9]'), '');
 
   String get normalisedPhone => normalisePhone(contactPhone);
+
+  /// The number in one fixed shape, so rows for the same customer compare
+  /// equal however the number was typed: `6381318192` and `916381318192`
+  /// are one person. A bare ten-digit number is taken to be Indian, which
+  /// is what every number in this workspace is.
+  String get canonicalPhone {
+    final digits = normalisedPhone;
+    return digits.length == 10 ? '91$digits' : digits;
+  }
+
+  /// The number as the list shows it: India's `91` prefix dropped when the
+  /// digits are certainly an Indian mobile, anything else left as stored —
+  /// the same rule as the web app's `displayPhone`.
+  static String displayPhone(String? raw) {
+    final original = (raw ?? '').trim();
+    if (original.isEmpty) return '';
+    final digits = normalisePhone(original);
+    if (digits.length == 12 && digits.startsWith('91')) {
+      return digits.substring(2);
+    }
+    return original;
+  }
 
   static DateTime? _parseDate(Object? value) {
     if (value is String && value.isNotEmpty) {

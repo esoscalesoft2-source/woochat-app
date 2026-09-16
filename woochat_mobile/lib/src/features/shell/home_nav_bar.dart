@@ -8,12 +8,16 @@ class NavDestination {
     this.icon,
     this.selectedIcon, {
     this.enabled = false,
+    this.opensSheet = false,
   });
 
   final String label;
   final IconData icon;
   final IconData selectedIcon;
   final bool enabled;
+
+  /// True for a tab that opens something rather than switching screens.
+  final bool opensSheet;
 }
 
 /// The app's bottom navigation.
@@ -21,7 +25,10 @@ class NavDestination {
 /// Phase 1 ships the Chats tab only; the rest are disabled placeholders so the
 /// final information architecture is visible.
 class HomeNavBar extends StatelessWidget {
-  const HomeNavBar({super.key});
+  const HomeNavBar({super.key, this.onMore});
+
+  /// Opens the More sheet (account, Sign out).
+  final VoidCallback? onMore;
 
   /// Chats leads: it is the only destination Phase 1 ships, and the router
   /// lands here after sign-in, so it should not sit behind a disabled tab.
@@ -31,13 +38,14 @@ class HomeNavBar extends StatelessWidget {
     NavDestination('Dashboard', Icons.dashboard_outlined, Icons.dashboard),
     NavDestination('Enquiries', Icons.assignment_outlined, Icons.assignment),
     NavDestination('Contacts', Icons.contacts_outlined, Icons.contacts),
-    NavDestination('More', Icons.more_horiz, Icons.more_horiz),
+    NavDestination('More', Icons.more_horiz, Icons.more_horiz,
+        enabled: true, opensSheet: true),
   ];
 
   /// Derived rather than hardcoded, so reordering can never leave the
-  /// highlight on the wrong tab.
-  static int get activeIndex =>
-      destinations.indexWhere((destination) => destination.enabled);
+  /// highlight on the wrong tab. More opens a sheet and is never "current".
+  static int get activeIndex => destinations
+      .indexWhere((destination) => destination.enabled && !destination.opensSheet);
 
   @override
   Widget build(BuildContext context) {
@@ -68,6 +76,10 @@ class HomeNavBar extends StatelessWidget {
   }
 
   void _onTap(BuildContext context, NavDestination destination) {
+    if (destination.opensSheet) {
+      onMore?.call();
+      return;
+    }
     if (destination.enabled) return;
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()

@@ -13,7 +13,9 @@ void main() {
         'contact_phone': '+919812345678',
       });
 
-      expect(chat.displayName, '+919812345678');
+      // Shown without the country code, like every other number in the app.
+      expect(chat.displayName, '9812345678');
+      expect(chat.shownPhone, '9812345678');
       expect(chat.unreadCount, 0);
       expect(chat.isArchived, isFalse);
     });

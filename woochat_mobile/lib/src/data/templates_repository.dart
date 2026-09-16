@@ -1,6 +1,7 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../core/constants.dart';
+import 'edge_function_auth.dart';
 import 'supabase_client.dart';
 
 /// Raised when a template could not be created or a parameter saved.
@@ -58,6 +59,8 @@ class MessageTemplate {
     required this.name,
     this.language,
     this.body,
+    this.headerFormat,
+    this.headerExampleUrl,
   });
 
   final String id;
@@ -65,12 +68,52 @@ class MessageTemplate {
   final String? language;
   final String? body;
 
+  /// `IMAGE`, `VIDEO`, `DOCUMENT` or null / `NONE` for a text-only header.
+  final String? headerFormat;
+
+  /// The sample media Meta approved the header with — what the customer
+  /// actually receives, so the bubble embeds it too.
+  final String? headerExampleUrl;
+
   factory MessageTemplate.fromMap(Map<String, dynamic> map) => MessageTemplate(
         id: map['id'].toString(),
         name: (map['name'] as String?)?.trim() ?? '',
         language: map['language'] as String?,
         body: map['body_text'] as String? ?? map['body'] as String?,
+        headerFormat: map['header_format'] as String?,
+        headerExampleUrl: map['header_example_url'] as String?,
       );
+
+  static final RegExp _placeholder = RegExp(r'\{\{\s*(\d+)\s*\}\}');
+
+  /// The `{{n}}` numbers the body needs, ascending and de-duplicated.
+  List<int> get parameterNumbers {
+    final found = <int>{};
+    for (final match in _placeholder.allMatches(body ?? '')) {
+      final n = int.tryParse(match.group(1)!);
+      if (n != null && n > 0) found.add(n);
+    }
+    return found.toList()..sort();
+  }
+
+  /// The body as the customer will read it. A placeholder with nothing
+  /// filled in stays visible as `{{n}}` rather than vanishing.
+  String render(Map<int, String> values) => (body ?? '').replaceAllMapped(
+        _placeholder,
+        (match) {
+          final n = int.parse(match.group(1)!);
+          final value = values[n]?.trim();
+          return (value == null || value.isEmpty) ? '{{$n}}' : value;
+        },
+      );
+
+  /// WhatsApp's media kind for the header, or null when it is text-only.
+  String? get headerMediaType => switch (headerFormat?.toUpperCase()) {
+        'IMAGE' => 'image',
+        'VIDEO' => 'video',
+        'DOCUMENT' => 'document',
+        _ => null,
+      };
 }
 
 /// Reads the existing `whatsapp_templates` table.
@@ -144,7 +187,7 @@ class TemplatesRepository {
   /// button takes.
   Future<void> createTemplate(TemplateDraft draft) async {
     try {
-      final response = await db.functions.invoke(
+      final response = await invokeEdgeFunction(
         Db.whatsappTemplateFn,
         body: <String, dynamic>{
           'action': 'create',
@@ -162,6 +205,8 @@ class TemplatesRepository {
               'whatsapp-template returned HTTP ${response.status}.',
         );
       }
+    } on EdgeFunctionAuthException catch (error) {
+      throw TemplateException(error.message);
     } on FunctionException catch (error) {
       throw TemplateException(
         _reasonFor(error.details) ??

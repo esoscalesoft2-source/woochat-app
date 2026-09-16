@@ -4,7 +4,6 @@ import 'package:google_fonts/google_fonts.dart';
 
 import '../../routing/app_router.dart';
 import '../../theme/wa_colors.dart';
-import 'widgets/brand_bolt.dart';
 
 /// The onboarding mockup's token names, resolved onto the app-wide WhatsApp
 /// palette so the very first screen is the same black as the rest.
@@ -16,59 +15,27 @@ class _T {
   static const Color dotInactive = Wa.secondaryText;
 
   /// The fade from the illustration down into the background.
-  static const Color fade75 = Color(0xBF161717);
-  static const Color fade45 = Color(0x73161717);
   static const Color fade70 = Color(0xB3161717);
-  static const Color fade96 = Color(0xF5161717);
   static const Color fade100 = Wa.chatBackground;
   static const double hPadding = 24; // px-6
 }
 
 /// One carousel page.
+/// One onboarding page: a poster that carries its own headline, so nothing
+/// is drawn over it.
 class _Slide {
-  const _Slide({
-    required this.image,
-    required this.titleLines,
-    required this.accentLine,
-    required this.quote,
-  });
+  const _Slide({required this.image});
 
   final String image;
-
-  /// Plain white lines of the headline.
-  final List<String> titleLines;
-
-  /// Final headline line, rendered in the accent colour.
-  final String accentLine;
-
-  final String quote;
 }
 
-/// Only one background image was supplied, so all three pages reuse it.
-/// Drop `onboarding_2.jpg` / `onboarding_3.jpg` into `assets/images/` and
-/// change the `image:` values below to give each page its own artwork.
+/// The three marketing posters, in order — "One Upgrade, Two Benefits",
+/// "Run Your Business Without WhatsApp Ban Worries", "One follow-up can
+/// turn a silent lead into a paying customer".
 const List<_Slide> _slides = <_Slide>[
-  _Slide(
-    image: 'assets/images/onboarding_1.jpg',
-    titleLines: <String>['NO EXCUSES', 'CLOSE EVERY'],
-    accentLine: 'LEAD',
-    quote: 'Sales is not about waiting for the right moment. It is about '
-        'reaching every customer before someone else does.',
-  ),
-  _Slide(
-    image: 'assets/images/onboarding_1.jpg',
-    titleLines: <String>['ONE INBOX', 'FOR YOUR WHOLE'],
-    accentLine: 'TEAM',
-    quote: 'Every conversation in one place, so nobody answers twice and '
-        'nobody gets forgotten.',
-  ),
-  _Slide(
-    image: 'assets/images/onboarding_1.jpg',
-    titleLines: <String>['REPLY FAST', 'EVEN WHILE YOU'],
-    accentLine: 'SLEEP',
-    quote: 'Automations and smart routing keep every customer answered, '
-        'around the clock.',
-  ),
+  _Slide(image: 'assets/images/onboarding_1.jpg'),
+  _Slide(image: 'assets/images/onboarding_2.jpg'),
+  _Slide(image: 'assets/images/onboarding_3.jpg'),
 ];
 
 /// Full-screen onboarding carousel shown before the login screen.
@@ -155,7 +122,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   }
 }
 
-/// Background image plus the cinematic scrim and headline for one page.
+/// One poster, full-bleed, with only its foot faded so the dots and the
+/// button read over it.
 class _SlideView extends StatelessWidget {
   const _SlideView({required this.slide, required this.bottomInset});
 
@@ -167,95 +135,29 @@ class _SlideView extends StatelessWidget {
     return Stack(
       fit: StackFit.expand,
       children: <Widget>[
-        // filter: brightness(0.58) contrast(1.12) from the design.
-        ColorFiltered(
-          colorFilter: const ColorFilter.matrix(<double>[
-            1.12, 0, 0, 0, -15.3, //
-            0, 1.12, 0, 0, -15.3, //
-            0, 0, 1.12, 0, -15.3, //
-            0, 0, 0, 1, 0, //
-          ]),
-          child: Image.asset(
-            slide.image,
-            fit: BoxFit.cover,
-            alignment: Alignment.center,
-            errorBuilder: (_, _, _) => const ColoredBox(color: _T.background),
-          ),
+        Image.asset(
+          slide.image,
+          fit: BoxFit.cover,
+          // Keep the headline at the top of the poster in frame on a wide
+          // or short screen; the floor is what gets cropped.
+          alignment: Alignment.topCenter,
+          errorBuilder: (_, _, _) => const ColoredBox(color: _T.background),
         ),
         const DecoratedBox(
           decoration: BoxDecoration(
             gradient: LinearGradient(
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
-              stops: <double>[0.0, 0.30, 0.60, 0.90, 1.0],
+              stops: <double>[0.0, 0.70, 0.90, 1.0],
               colors: <Color>[
-                _T.fade75,
-                _T.fade45,
+                Color(0x00000000),
+                Color(0x00000000),
                 _T.fade70,
-                _T.fade96,
                 _T.fade100,
               ],
             ),
           ),
           child: SizedBox.expand(),
-        ),
-        // bg-emerald-950/20 mix-blend-multiply
-        const ColoredBox(color: Color(0x33022C22)),
-        Padding(
-          padding: EdgeInsets.fromLTRB(
-            _T.hPadding,
-            0,
-            _T.hPadding,
-            bottomInset,
-          ),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.end,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              Text.rich(
-                TextSpan(
-                  children: <InlineSpan>[
-                    TextSpan(text: '${slide.titleLines.join('\n')}\n'),
-                    TextSpan(
-                      text: slide.accentLine,
-                      style: const TextStyle(
-                        color: _T.accent,
-                        shadows: <Shadow>[
-                          Shadow(
-                            color: Color(0x7321C063),
-                            blurRadius: 20,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-                style: GoogleFonts.spaceGrotesk(
-                  fontSize: 30,
-                  fontWeight: FontWeight.w800,
-                  height: 1.08,
-                  letterSpacing: -0.75,
-                  color: Colors.white,
-                  shadows: const <Shadow>[
-                    Shadow(color: Color(0x66000000), blurRadius: 6),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 12),
-              FractionallySizedBox(
-                widthFactor: 0.92,
-                child: Text(
-                  '“${slide.quote}”',
-                  style: GoogleFonts.inter(
-                    fontSize: 13,
-                    height: 1.625,
-                    fontStyle: FontStyle.italic,
-                    color: Colors.white.withValues(alpha: 0.82),
-                  ),
-                ),
-              ),
-            ],
-          ),
         ),
       ],
     );
@@ -278,7 +180,16 @@ class _Header extends StatelessWidget {
           Row(
             mainAxisSize: MainAxisSize.min,
             children: <Widget>[
-              const BrandBolt(color: _T.accent, size: 24),
+              // The ring cut out of its dark square, so over a photo it
+              // reads as the mark rather than a black tile stuck on it.
+              Image.asset(
+                'assets/branding/app_icon_round.png',
+                width: 28,
+                height: 28,
+                fit: BoxFit.contain,
+                errorBuilder: (_, _, _) =>
+                    const SizedBox(width: 28, height: 28),
+              ),
               const SizedBox(width: 8),
               Text(
                 'WOO',

@@ -14,7 +14,11 @@ class Message {
     this.replyToMessageId,
     this.reaction,
     this.sendErrorMessage,
+    this.sendErrorCode,
     this.createdAt,
+    this.scheduledAt,
+    this.templateLanguage,
+    this.templateParams = const <String>[],
   });
 
   final String id;
@@ -28,7 +32,16 @@ class Message {
   final String? replyToMessageId;
   final String? reaction;
   final String? sendErrorMessage;
+  final String? sendErrorCode;
   final DateTime? createdAt;
+
+  /// When a scheduled row is due. Left in place after it sends, so it also
+  /// marks a row as having once been scheduled.
+  final DateTime? scheduledAt;
+
+  /// A scheduled template: the sender rebuilds it from these at send time.
+  final String? templateLanguage;
+  final List<String> templateParams;
 
   factory Message.fromMap(Map<String, dynamic> map) {
     return Message(
@@ -43,8 +56,31 @@ class Message {
       replyToMessageId: map['reply_to_message_id'] as String?,
       reaction: map['reaction'] as String?,
       sendErrorMessage: map['send_error_message'] as String?,
+      sendErrorCode: map['send_error_code'] as String?,
       createdAt: _parseDate(map['created_at']),
+      scheduledAt: _parseDate(map['scheduled_at']),
+      templateLanguage: map['template_language'] as String?,
+      templateParams: switch (map['template_params']) {
+        final List<dynamic> list => list.map((p) => p.toString()).toList(),
+        _ => const <String>[],
+      },
     );
+  }
+
+  /// Still in the queue — the server has not claimed it yet.
+  bool get isScheduled => status == MessageStatus.scheduled;
+
+  /// Scheduled, but parked by Meta's marketing cap; the server keeps
+  /// re-queuing it until it goes.
+  bool get isHeldByMarketingCap =>
+      isScheduled && sendErrorCode == SendErrorCode.metaMarketingCap;
+
+  /// The sender's "retrying (n/3)" note when an attempt failed and the row
+  /// went back in the queue, else null.
+  String? get retryNote {
+    final note = sendErrorMessage;
+    if (!isScheduled || note == null) return null;
+    return RegExp(r'retrying \(\d+/\d+\)').hasMatch(note) ? note : null;
   }
 
   bool get isOutbound => direction == MessageDirection.outbound;

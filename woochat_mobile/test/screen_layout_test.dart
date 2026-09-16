@@ -102,7 +102,15 @@ void main() {
       expect(tester.takeException(), isNull);
       expect(find.text('GET STARTED'), findsOneWidget);
       expect(find.text('SKIP'), findsOneWidget);
-      expect(find.textContaining('LEAD', findRichText: true), findsOneWidget);
+      // The posters carry their own headlines; the first is on screen.
+      expect(
+        find.byWidgetPredicate((w) =>
+            w is Image &&
+            w.image is AssetImage &&
+            (w.image as AssetImage).assetName ==
+                'assets/images/onboarding_1.jpg'),
+        findsOneWidget,
+      );
     });
 
     testWidgets('GET STARTED fires the finish action', (tester) async {

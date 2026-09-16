@@ -40,7 +40,7 @@ class ChatFiltersRepository {
     final collections = results[5] as Map<String, String>;
     final adMap = results[6] as Map<String, String>;
     final automations = results[7] as List<Automation>;
-    final noteTags = results[8] as List<String>;
+    final notes = results[8] as List<Note>;
     final notesByContact = results[9] as Map<String, List<Note>>;
     final directory = results[10] as Map<String, DirectoryEntry>;
     final adSourced = results[11] as Set<String>;
@@ -82,8 +82,14 @@ class ChatFiltersRepository {
           if (entry.value.photoUrl?.trim().isNotEmpty ?? false)
             entry.key: entry.value.photoUrl!.trim(),
       },
+      contactNameByPhone: <String, String>{
+        for (final entry in directory.entries)
+          if (entry.value.name?.trim().isNotEmpty ?? false)
+            entry.key: entry.value.name!.trim(),
+      },
       notesByContactId: notesByContact,
-      noteTags: noteTags,
+      noteTags: noteTagsOf(notes),
+      notes: notes,
     );
   }
 
@@ -181,19 +187,30 @@ class ChatFiltersRepository {
   Future<List<Automation>> _automations() async =>
       (await _all(Db.automations, 'id, name')).map(Automation.fromMap).toList();
 
-  /// The tag library, used to populate the Notes submenu.
-  Future<List<String>> _notes() async {
-    final rows = await _all(Db.notes, 'id, note_text, tags');
+  /// The note library, newest first — the Notes menu offers these, and the
+  /// filter dropdown reads their tags.
+  Future<List<Note>> _notes() async {
+    final rows = await _all(Db.notes, 'id, note_text, tags, created_at');
+    final notes = rows.map(Note.fromMap).toList()
+      ..sort((a, b) {
+        final aAt = a.createdAt?.millisecondsSinceEpoch ?? 0;
+        final bAt = b.createdAt?.millisecondsSinceEpoch ?? 0;
+        return bAt.compareTo(aAt);
+      });
+    return notes;
+  }
+
+  /// Every distinct tag in the library, sorted.
+  static List<String> noteTagsOf(List<Note> notes) {
     final tags = <String>{};
-    for (final note in rows.map(Note.fromMap)) {
+    for (final note in notes) {
       for (final tag in note.tags) {
         final trimmed = tag.trim();
         if (trimmed.isNotEmpty) tags.add(trimmed);
       }
     }
-    final sorted = tags.toList()
+    return tags.toList()
       ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
-    return sorted;
   }
 
   Future<Map<String, List<Note>>> _contactNotes() async {
@@ -206,6 +223,14 @@ class ChatFiltersRepository {
       final parsed = Note.fromMap(note);
       final list = map.putIfAbsent(contactId, () => <Note>[]);
       if (!list.any((existing) => existing.id == parsed.id)) list.add(parsed);
+    }
+    // Newest first, so the row can show the latest note without re-sorting.
+    for (final list in map.values) {
+      list.sort((a, b) {
+        final aAt = a.createdAt?.millisecondsSinceEpoch ?? 0;
+        final bAt = b.createdAt?.millisecondsSinceEpoch ?? 0;
+        return bAt.compareTo(aAt);
+      });
     }
     return map;
   }

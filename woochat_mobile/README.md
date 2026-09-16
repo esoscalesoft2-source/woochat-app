@@ -52,9 +52,17 @@ template and also keeps the directory non-empty so a fresh clone still builds.
 ### Running
 
 ```bash
-flutter run                 # any device, reads assets/env/env.json
-flutter run -d chrome       # same, no flags needed
+flutter run                              # any device, reads assets/env/env.json
+flutter run -d chrome --web-port 8099    # browser — see the note below
 ```
+
+> **Chrome: always pass a fixed `--web-port`.** Without it every `flutter run`
+> picks a random port, and to the browser `localhost:50171` and
+> `localhost:51234` are two different sites with separate storage — so the
+> saved sign-in from the last run is simply not there, and the app opens on
+> the login screen. That is not the app signing you out; it is a fresh origin.
+> A fixed port keeps the same origin, and the session, across restarts.
+> (A hot restart inside a running session never changes the port.)
 
 To override at build time (CI, release):
 

@@ -3,8 +3,14 @@
     <uses-permission android:name="android.permission.INTERNET"/>
     <!-- Voice notes in the chat composer. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+    <!-- Camera attachment. The feature is declared optional so the app still
+         installs on a device without one. -->
+    <uses-permission android:name="android.permission.CAMERA"/>
+    <uses-feature android:name="android.hardware.camera" android:required="false"/>
+    <!-- Contact sharing, through the system picker. -->
+    <uses-permission android:name="android.permission.READ_CONTACTS"/>
     <application
-        android:label="woochat_mobile"
+        android:label="WOO Chat"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity
@@ -44,6 +50,20 @@
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
+        </intent>
+        <!-- image_picker needs to see a camera app to hand the capture to. -->
+        <intent>
+            <action android:name="android.media.action.IMAGE_CAPTURE"/>
+        </intent>
+        <!-- file_picker opens the system document UI. -->
+        <intent>
+            <action android:name="android.intent.action.GET_CONTENT"/>
+            <data android:mimeType="*/*"/>
+        </intent>
+        <!-- flutter_contacts opens the system contact picker. -->
+        <intent>
+            <action android:name="android.intent.action.PICK"/>
+            <data android:mimeType="vnd.android.cursor.dir/contact"/>
         </intent>
     </queries>
 </manifest>

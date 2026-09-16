@@ -22,6 +22,16 @@ enum SessionStatus {
   failed,
 }
 
+/// Whether an auth event should change who the app thinks is signed in.
+///
+/// A null session only means "signed out" when Supabase says so explicitly.
+/// A dropped or slow token refresh can surface as a null session on other
+/// events — acting on those would throw away a perfectly good session and
+/// bounce a signed-in user to the login screen mid-conversation. The web app
+/// applies exactly this rule (`shouldApplyAuthEvent`).
+bool shouldApplyAuthEvent(AuthChangeEvent event, Session? session) =>
+    session != null || event == AuthChangeEvent.signedOut;
+
 /// Single source of truth for "who is signed in and which tenant are they".
 ///
 /// The router listens to this to decide where the user is allowed to be, and
@@ -42,17 +52,39 @@ class SessionController extends ChangeNotifier {
   SessionStatus _status = SessionStatus.unknown;
   TenantContext? _tenantContext;
   String? _error;
+  String? _signOutNotice;
 
   SessionStatus get status => _status;
   TenantContext? get tenantContext => _tenantContext;
   String? get error => _error;
+
+  /// Why the user found themselves on the login screen without tapping Sign
+  /// out — so an expired session says so instead of looking like a bug.
+  /// Null after a deliberate sign-out or a fresh start.
+  String? get signOutNotice => _signOutNotice;
+
+  /// Reads the notice once, for the login screen to show, and clears it.
+  String? takeSignOutNotice() {
+    final notice = _signOutNotice;
+    _signOutNotice = null;
+    return notice;
+  }
 
   bool get isSignedOut => _status == SessionStatus.signedOut;
   bool get isReady => _status == SessionStatus.ready;
 
   /// Begins watching Supabase auth. Call once, at app start.
   void start() {
-    _subscription = _auth.onAuthStateChange.listen(_onAuthState);
+    _subscription = _auth.onAuthStateChange.listen(
+      _onAuthState,
+      // A refresh that failed for a retryable reason (offline, 5xx) arrives
+      // here as a stream error, not an event. The SDK keeps the session and
+      // tries again on its next tick, so nothing changes on this side — but
+      // without a handler the error is unhandled and the subscription dies.
+      onError: (Object error, StackTrace stack) {
+        debugPrint('Auth stream error (session kept): $error');
+      },
+    );
 
     final session = _auth.currentSession;
     _userId = session?.user.id;
@@ -64,6 +96,8 @@ class SessionController extends ChangeNotifier {
   }
 
   void _onAuthState(AuthState state) {
+    if (!shouldApplyAuthEvent(state.event, state.session)) return;
+
     final userId = state.session?.user.id;
     // Ignore token refreshes for the same user.
     if (userId == _userId && _status != SessionStatus.unknown) return;
@@ -72,11 +106,25 @@ class SessionController extends ChangeNotifier {
     if (userId == null) {
       _tenantContext = null;
       _error = null;
+      _signOutNotice = _noticeFor(state.signOutReason);
       _set(SessionStatus.signedOut);
     } else {
+      _signOutNotice = null;
       unawaited(_resolveTenant());
     }
   }
+
+  /// What to tell the user about a sign-out they did not ask for.
+  static String? _noticeFor(SignOutReason? reason) => switch (reason) {
+        SignOutReason.sessionExpired =>
+          'Your session expired, so you were signed out. Sign in again to '
+              'continue.',
+        SignOutReason.sessionMissing =>
+          'Your saved sign-in could not be restored. Sign in again to '
+              'continue.',
+        // A deliberate Sign out, or one relayed from another browser tab.
+        SignOutReason.userInitiated || null => null,
+      };
 
   Future<void> _resolveTenant() async {
     _error = null;
@@ -105,6 +153,7 @@ class SessionController extends ChangeNotifier {
       _userId = null;
       _tenantContext = null;
       _error = null;
+      _signOutNotice = null;
       _set(SessionStatus.signedOut);
     }
   }

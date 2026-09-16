@@ -50,13 +50,11 @@ class ChatAssignmentRepository {
   /// [alsoInclude] carries ids the caller already knows are involved — the
   /// chat's owner and its current assignee — so they are offered even when
   /// their profile row is not visible.
-  Future<List<TeamMember>> members({
-    required Set<String> alsoInclude,
-    String? signedInUserId,
-    String? signedInFallbackName,
-  }) async {
+  /// Every readable profile's display name by user id, for the owner /
+  /// assignee line on each chat row. Profiles that cannot be read are simply
+  /// absent; callers fall back to a short id.
+  Future<Map<String, String>> displayNames() async {
     final names = <String, String>{};
-
     try {
       final rows = await db
           .from(Db.profiles)
@@ -69,8 +67,37 @@ class ChatAssignmentRepository {
         if (name != null) names[id] = name;
       }
     } on PostgrestException {
-      // Names are a nicety; the ids below still make the picker usable.
+      // Names are a nicety; the ids still make the list usable.
     }
+    return names;
+  }
+
+  /// Whether the signed-in staff member may set a chat back to unread — an
+  /// admin capability that an admin can delegate per user from the Users page.
+  Future<bool> canMarkUnread(String userId) async {
+    try {
+      final row = await db
+          .from(Db.profiles)
+          .select('can_mark_unread')
+          .eq('user_id', userId)
+          .maybeSingle();
+      return row?['can_mark_unread'] == true;
+    } on PostgrestException {
+      return false;
+    }
+  }
+
+  /// Everyone who can be picked, named where a profile is readable.
+  ///
+  /// [alsoInclude] carries ids the caller already knows are involved — the
+  /// chat's owner and its current assignee — so they are offered even when
+  /// their profile row is not visible.
+  Future<List<TeamMember>> members({
+    required Set<String> alsoInclude,
+    String? signedInUserId,
+    String? signedInFallbackName,
+  }) async {
+    final names = await displayNames();
 
     final ids = <String>{...names.keys, ...alsoInclude}
       ..removeWhere((id) => id.isEmpty);
@@ -89,6 +116,26 @@ class ChatAssignmentRepository {
       ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
 
     return members;
+  }
+
+  /// Reassigns every chat in [chatIds] to [userId] (null clears) through the
+  /// existing `transfer_chats_bulk` RPC — the same call the web app's
+  /// "Assign User" makes from its select mode. It writes `assigned_to` and
+  /// the assignment log in one transaction and returns how many rows moved.
+  Future<int> assignMany(Iterable<String> chatIds, String? userId) async {
+    final ids = chatIds.toList();
+    if (ids.isEmpty) return 0;
+    try {
+      final result = await db.rpc<dynamic>(
+        Db.transferChatsBulkFn,
+        params: <String, dynamic>{'p_chat_ids': ids, 'p_to_user': userId},
+      );
+      return result is num ? result.toInt() : ids.length;
+    } on PostgrestException catch (error) {
+      throw ChatAssignmentException(
+        'Could not reassign the chats: ${error.message}',
+      );
+    }
   }
 
   /// Writes the assignment. A null [userId] clears it.

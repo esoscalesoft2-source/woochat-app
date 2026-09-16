@@ -50,3 +50,9 @@ app.*.map.json
 # Local environment (never commit real keys)
 assets/env/env.json
 .env
+
+# Server credentials dropped here for ops work — never commit these.
+spx-aurotec-credentials.md
+spx-aurotec-in.key
+spx-aurotec-in.key.pub
+*.key

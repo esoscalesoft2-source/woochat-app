@@ -29,6 +29,9 @@ class Db {
   static const String automations = 'automations';
   static const String notes = 'notes';
   static const String contactNotes = 'contact_notes';
+
+  /// Written summaries of a conversation, one row each.
+  static const String chatSummaries = 'chat_summaries';
   static const String whatsappConnections = 'whatsapp_connections';
   static const String whatsappTemplates = 'whatsapp_templates';
 
@@ -69,6 +72,12 @@ class Db {
   /// The column on `chats` holding the assigned team member's user id.
   static const String assignedToColumn = 'assigned_to';
 
+  /// Reassigns a set of chats at once, logging each move.
+  static const String transferChatsBulkFn = 'transfer_chats_bulk';
+
+  /// A tenant admin's own staff, with their WhatsApp number and flags.
+  static const String listCustomersForAdminFn = 'list_customers_for_admin';
+
   /// The existing storage bucket the web app already writes chat media into.
   static const String attachmentsBucket = 'chat-attachments';
 
@@ -97,6 +106,19 @@ class MessageStatus {
   static const String delivered = 'delivered';
   static const String read = 'read';
   static const String failed = 'failed';
+
+  /// Waiting for `scheduled-message-sender` to claim it at `scheduled_at`.
+  static const String scheduled = 'scheduled';
+}
+
+/// `messages.send_error_code` values the app reads.
+class SendErrorCode {
+  const SendErrorCode._();
+
+  /// Meta refused with 131049: the customer has hit their marketing-message
+  /// cap. The sender re-queues the row twelve hours on, again and again,
+  /// until it goes.
+  static const String metaMarketingCap = 'META_131049';
 }
 
 /// `user_roles.role` — the existing `app_role` enum.

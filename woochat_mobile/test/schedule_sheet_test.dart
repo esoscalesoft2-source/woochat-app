@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:woochat_mobile/src/data/templates_repository.dart';
 import 'package:woochat_mobile/src/features/chat/widgets/message_composer.dart';
 import 'package:woochat_mobile/src/theme/app_theme.dart';
 
@@ -8,10 +9,24 @@ void main() {
     /// Opens the sheet the way the app does — from the composer's clock icon,
     /// under the real theme. Both matter: the app-wide filled button style is
     /// full width, which is an infinite width inside the sheet's button Row.
+    // A recent inbound keeps the 24-hour window open, so the dialog offers
+    // the free-form path; without it every time needs a template.
+    final recentInbound = DateTime.now().subtract(const Duration(hours: 1));
+    const templates = <MessageTemplate>[
+      MessageTemplate(
+        id: 't1',
+        name: 'order_update',
+        language: 'en_US',
+        body: 'Hi {{1}}, your order {{2}} is on the way.',
+      ),
+    ];
+
     Future<void> openFromComposer(
       WidgetTester tester, {
       String draft = 'Hello',
       Size size = const Size(390, 844),
+      DateTime? lastInboundAt,
+      bool inboundGiven = true,
     }) async {
       tester.view.physicalSize = size;
       tester.view.devicePixelRatio = 1.0;
@@ -31,7 +46,10 @@ void main() {
                   windowOpen: true,
                   onTemplates: () {},
                   onAttach: (_) {},
-                  onSchedule: (_) {},
+                  onSchedule: (_, _, _) async => true,
+                  lastInboundAt:
+                      inboundGiven ? (lastInboundAt ?? recentInbound) : null,
+                  loadTemplates: () async => templates,
                   onBlocked: () {},
                   onVoiceNote: (_) async => true,
                   onRecorderProblem: (_) {},
@@ -98,6 +116,45 @@ void main() {
       expect(find.text('Cancel'), findsOneWidget);
       expect(find.text('Schedule'), findsOneWidget);
       expect(find.textContaining('Scheduling: "Hello"'), findsOneWidget);
+    });
+
+    testWidgets('with the window closed, a template is required', (tester) async {
+      await openFromComposer(tester, inboundGiven: false);
+
+      expect(
+        find.textContaining('outside the 24-hour window'),
+        findsOneWidget,
+      );
+      // Schedule is off until a template and its params are filled.
+      final button = tester.widget<FilledButton>(
+        find.widgetWithText(FilledButton, 'Schedule'),
+      );
+      expect(button.onPressed, isNull);
+
+      await tester.tap(find.byKey(const ValueKey<String>('schedule-template')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('order_update').last);
+      await tester.pumpAndSettle();
+
+      await tester.enterText(
+        find.byKey(const ValueKey<String>('schedule-param-1')),
+        'Vijay',
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey<String>('schedule-param-2')),
+        '#5678',
+      );
+      await tester.pump();
+
+      // Preview renders the filled body.
+      expect(
+        find.textContaining('Hi Vijay, your order #5678 is on the way.'),
+        findsOneWidget,
+      );
+      final ready = tester.widget<FilledButton>(
+        find.widgetWithText(FilledButton, 'Schedule'),
+      );
+      expect(ready.onPressed, isNotNull);
     });
 
     testWidgets('an empty draft leaves Schedule disabled', (tester) async {

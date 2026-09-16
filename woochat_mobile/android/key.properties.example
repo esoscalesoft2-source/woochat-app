@@ -1,0 +1,14 @@
+# Copy this file to android/key.properties and fill in the values.
+# key.properties and the keystore are git-ignored: NEVER commit them, and back
+# the keystore up somewhere safe — if it is lost, no future build can update
+# the installed app and every phone has to uninstall and reinstall.
+#
+# Create the keystore once (answer the prompts; use a password you will keep):
+#
+#   keytool -genkey -v -keystore ~/woochat-release.jks -keyalg RSA \
+#           -keysize 2048 -validity 10000 -alias woochat
+#
+storeFile=/Users/<you>/woochat-release.jks
+storePassword=<the keystore password>
+keyAlias=woochat
+keyPassword=<the key password>

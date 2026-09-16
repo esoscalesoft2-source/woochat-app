@@ -4,12 +4,18 @@
 <dict>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>Take a photo to send in a chat.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Choose a photo or video to send in a chat.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>Share a contact card in a chat.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Woo Chats needs the microphone to record voice notes you send in a chat.</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Woochat Mobile</string>
+	<string>WOO Chat</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -17,7 +23,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>woochat_mobile</string>
+	<string>WOO Chat</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>

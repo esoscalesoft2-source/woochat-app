@@ -46,7 +46,7 @@ class _WooChatAppState extends State<WooChatApp> {
 
     if (router == null || session == null) {
       return MaterialApp(
-        title: 'WooChat',
+        title: 'WOO Chat',
         debugShowCheckedModeBanner: false,
         theme: AppTheme.dark(),
         darkTheme: AppTheme.dark(),
@@ -60,7 +60,7 @@ class _WooChatAppState extends State<WooChatApp> {
     return SessionScope(
       controller: session,
       child: MaterialApp.router(
-        title: 'WooChat',
+        title: 'WOO Chat',
         debugShowCheckedModeBanner: false,
         theme: AppTheme.dark(),
         darkTheme: AppTheme.dark(),

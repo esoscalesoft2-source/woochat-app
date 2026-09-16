@@ -94,6 +94,28 @@ class Wa {
   static const Color warning = Color(0xFFFABD32);
   static const Color warningBackground = Color(0xE63B2A1A);
 
+  // ---- Chat row extras (matching the web sidebar) ----------------------
+
+  /// The dimmer grey of the owner line. Web `#667781`.
+  static const Color mutedText = Color(0xFF667781);
+
+  /// The 🛍 product chip. Web `#f0b429` on 15% of itself.
+  static const Color productChip = Color(0xFFF0B429);
+  static const Color productChipBackground = Color(0x26F0B429);
+
+  /// The latest-note line. Web `#dca67a`.
+  static const Color note = Color(0xFFDCA67A);
+
+  /// Quick replies, the same amber the attach menu uses.
+  /// `--attachment-type-quick-replies-color`
+  static const Color quickReply = Color(0xFFFFBC38);
+
+  /// Tint behind a row that still has unread messages. Web `#1f2f36`.
+  static const Color rowUnread = Color(0xFF1F2F36);
+
+  /// Tint behind a row picked in select mode. Web `#12463a`.
+  static const Color rowSelected = Color(0xFF12463A);
+
   // ---- Names kept for existing call sites ------------------------------
   //
   // These are aliases onto the palette above, not extra colours.

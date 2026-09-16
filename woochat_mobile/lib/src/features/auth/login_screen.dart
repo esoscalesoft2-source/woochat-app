@@ -33,7 +33,11 @@ class _T {
 ///
 /// Creating an account lives on its own screen at /signup.
 class LoginScreen extends StatefulWidget {
-  const LoginScreen({super.key});
+  const LoginScreen({super.key, this.notice});
+
+  /// Why the user is here without having tapped Sign out — shown once above
+  /// the form so an expired session reads as that, not as a bug.
+  final String? notice;
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
@@ -155,6 +159,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           busy: _busy,
                           obscurePassword: _obscurePassword,
                           error: _error,
+                          notice: widget.notice,
                           onToggleObscure: () => setState(
                             () => _obscurePassword = !_obscurePassword,
                           ),
@@ -241,20 +246,17 @@ class _MarketingPanel extends StatelessWidget {
         children: <Widget>[
           Row(
             children: <Widget>[
-              Container(
+              // The ring cut out of its dark square — the tinted box that
+              // stood in for it is gone, and so is the black tile a square
+              // icon would have put on the card.
+              Image.asset(
+                'assets/branding/app_icon_round.png',
                 width: 48,
                 height: 48,
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.10),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: Colors.white.withValues(alpha: 0.15),
-                  ),
-                ),
-                child: const Icon(
-                  Icons.forum_outlined,
-                  color: _T.accentBright,
-                  size: 24,
+                fit: BoxFit.contain,
+                errorBuilder: (_, _, _) => const SizedBox(
+                  width: 48,
+                  height: 48,
                 ),
               ),
               const SizedBox(width: 12),
@@ -394,6 +396,7 @@ class _AuthCard extends StatelessWidget {
       required this.busy,
     required this.obscurePassword,
     required this.error,
+    required this.notice,
     required this.onToggleObscure,
     required this.onSubmit,
     required this.onForgotPassword,
@@ -409,6 +412,9 @@ class _AuthCard extends StatelessWidget {
   final bool busy;
   final bool obscurePassword;
   final String? error;
+
+  /// Why the user landed here without signing out, if that is what happened.
+  final String? notice;
   final VoidCallback onToggleObscure;
   final VoidCallback onSubmit;
   final VoidCallback onForgotPassword;
@@ -461,6 +467,40 @@ class _AuthCard extends StatelessWidget {
                   textAlign: TextAlign.center,
                   style: GoogleFonts.inter(fontSize: 14, color: _T.muted),
                 ),
+                if (notice != null) ...<Widget>[
+                  const SizedBox(height: 16),
+                  Container(
+                    key: const ValueKey<String>('sign-out-notice'),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Wa.warningBackground,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        const Icon(
+                          Icons.info_outline,
+                          size: 18,
+                          color: Wa.warning,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            notice!,
+                            style: GoogleFonts.inter(
+                              fontSize: 13,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 24),
                 _Field(
                   controller: emailController,

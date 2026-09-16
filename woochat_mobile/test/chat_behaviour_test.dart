@@ -110,18 +110,143 @@ void main() {
   });
 
   group('chat preview', () {
-    test('collapses the raw attachment marker into a short label', () {
+    test('attachment markers collapse to the same emoji labels as the web', () {
       const raw =
           '[attachment:image|https://spx.aurotec.in/storage/v1/object/public/'
           'chat-attachments/x/50_day_camp_intro_en.jpg] Exclusive Update!';
 
-      expect(chatPreview(raw), '[image] Exclusive Update!');
+      expect(chatPreview(raw), '📷 Photo');
+      expect(chatPreview('[attachment:audio|x]'), '🎤 Audio');
+      expect(chatPreview('[attachment:video|x]'), '🎥 Video');
+      expect(chatPreview('[attachment:sticker|x]'), '🌟 Sticker');
+      expect(chatPreview('[attachment:document|x]'), '📄 Document');
     });
 
-    test('collapses newlines and falls back when there is no message', () {
+    test('paperclip previews are classified by file extension', () {
+      expect(chatPreview('📎 note.OGG'), '🎤 Audio');
+      expect(chatPreview('📎 pic.jpeg'), '📷 Photo');
+      expect(chatPreview('📎 clip.mp4'), '🎥 Video');
+      expect(chatPreview('📎 invoice.pdf'), '📄 Document');
+    });
+
+    test('collapses newlines and is empty when there is no message', () {
       expect(chatPreview('line one\nline two'), 'line one line two');
-      expect(chatPreview(null), 'No messages yet');
-      expect(chatPreview('   '), 'No messages yet');
+      expect(chatPreview(null), '');
+      expect(chatPreview('   '), '');
+    });
+  });
+
+  group('display phone', () {
+    test('drops the 91 prefix only for a full Indian mobile number', () {
+      expect(Chat.displayPhone('919876543210'), '9876543210');
+      expect(Chat.displayPhone('+91 98765 43210'), '9876543210');
+      expect(Chat.displayPhone('9876543210'), '9876543210');
+      expect(Chat.displayPhone('441234567890'), '441234567890');
+      expect(Chat.displayPhone(null), '');
+    });
+  });
+
+  group('note excerpt', () {
+    test('collapses whitespace and cuts at the web limit', () {
+      expect(noteExcerpt('  Returned\n\n  parcel '), 'Returned parcel');
+      expect(noteExcerpt('12345678901234567890'), '12345678901234567890');
+      expect(
+        noteExcerpt('customer wants exchange for size XL'),
+        'customer wants excha...',
+      );
+      expect(noteExcerpt(null), '');
+    });
+  });
+
+  group('hex colour', () {
+    test('parses the label colour formats the web stores', () {
+      expect(parseHexColor('#00a884'), const Color(0xFF00A884));
+      expect(parseHexColor('00a884'), const Color(0xFF00A884));
+      expect(parseHexColor('#fff'), const Color(0xFFFFFFFF));
+      expect(parseHexColor('red'), isNull);
+    });
+  });
+
+  group('chat row', () {
+    Chat chat({
+      String? lastMessage,
+      int unread = 0,
+      String? assignedTo,
+      String? thumb,
+    }) =>
+        Chat(
+          id: 'c1',
+          userId: 'owner',
+          contactName: 'Own name',
+          contactPhone: '919876543210',
+          lastMessage: lastMessage,
+          unreadCount: unread,
+          isUnread: unread > 0,
+          assignedTo: assignedTo,
+          lastAdHeadline: thumb == null ? null : 'Gym Fit in Style',
+          lastAdThumbnailUrl: thumb,
+        );
+
+    Widget host(Widget tile) => MaterialApp(
+          home: Scaffold(body: ListView(children: <Widget>[tile])),
+        );
+
+    testWidgets('shows the contact name, owner, product and note lines',
+        (tester) async {
+      await tester.pumpWidget(host(ChatListTile(
+        chat: chat(lastMessage: 'Bro'),
+        subtitleStamp: '11:10 am',
+        name: 'Fi18608-Barath',
+        labelColors: const <String>['#7c3aed'],
+        ownerLine: const OwnerLine(OwnerLineKind.assignee, 'Vishva Fanideaz'),
+        productName: 'gym2.0',
+        noteExcerpt: 'Returned',
+        onTap: () {},
+      )));
+
+      expect(find.text('Fi18608-Barath'), findsOneWidget);
+      expect(find.text('Own name'), findsNothing);
+      expect(find.text('Vishva Fanideaz'), findsOneWidget);
+      expect(find.text('🛍 gym2.0'), findsOneWidget);
+      expect(find.text('Bro'), findsOneWidget);
+      expect(find.text('Returned'), findsOneWidget);
+    });
+
+    testWidgets('falls back to the number when there is no last message',
+        (tester) async {
+      await tester.pumpWidget(host(ChatListTile(
+        chat: chat(),
+        subtitleStamp: '',
+        onTap: () {},
+      )));
+
+      expect(find.text('9876543210'), findsOneWidget);
+      expect(find.text('No messages yet'), findsNothing);
+    });
+
+    testWidgets('an unassigned chat says so in italics', (tester) async {
+      await tester.pumpWidget(host(ChatListTile(
+        chat: chat(lastMessage: 'hi'),
+        subtitleStamp: '',
+        ownerLine: const OwnerLine(OwnerLineKind.unassigned, 'Unassigned'),
+        onTap: () {},
+      )));
+
+      final text = tester.widget<Text>(find.text('Unassigned'));
+      expect(text.style?.fontStyle, FontStyle.italic);
+    });
+
+    testWidgets('long press fires the row menu callback', (tester) async {
+      var pressed = false;
+      await tester.pumpWidget(host(ChatListTile(
+        chat: chat(lastMessage: 'hi'),
+        subtitleStamp: '',
+        onTap: () {},
+        onLongPress: () => pressed = true,
+      )));
+
+      await tester.longPress(find.text('hi'));
+      expect(pressed, isTrue);
     });
   });
 
@@ -197,6 +322,7 @@ void main() {
       WidgetTester tester, {
       required bool windowOpen,
       bool noticeHidden = false,
+      DateTime? lastInboundAt,
       VoidCallback? onTemplates,
       ValueChanged<AttachOption>? onAttach,
       VoidCallback? onBlocked,
@@ -212,12 +338,17 @@ void main() {
               onSend: (_) async => true,
               windowOpen: windowOpen,
               noticeHidden: noticeHidden,
+              // A recent inbound keeps the 24-hour window open, so the
+              // Schedule dialog offers the free-form path rather than
+              // insisting on a template.
+              lastInboundAt: lastInboundAt ??
+                  DateTime.now().subtract(const Duration(hours: 1)),
               onTemplates: onTemplates ?? () {},
               onAttach: onAttach ?? (_) {},
               onVoiceNote: onVoiceNote ?? (_) async => true,
               onRecorderProblem: onRecorderProblem ?? (_) {},
               recorderBuilder: recorder == null ? null : () => recorder,
-              onSchedule: (_) {},
+              onSchedule: (_, _, _) async => true,
               onBlocked: onBlocked ?? () {},
               // The real picker loads through a platform channel that never
               // settles in tests, so the panel itself is stubbed out.
@@ -694,7 +825,7 @@ void main() {
       expect(find.byIcon(Icons.schedule), findsOneWidget);
       expect(find.byIcon(Icons.mic), findsOneWidget);
       // A thin strip explains why, rather than a blocking box.
-      expect(find.textContaining('24-hour window expired'), findsOneWidget);
+      expect(find.textContaining('24-hour window has expired'), findsOneWidget);
     });
 
     testWidgets('the field is inert while the window is closed',
@@ -709,23 +840,34 @@ void main() {
       await pump(tester, windowOpen: false, noticeHidden: true);
 
       expect(tester.takeException(), isNull);
-      expect(find.textContaining('24-hour window expired'), findsNothing);
+      expect(find.textContaining('24-hour window has expired'), findsNothing);
       expect(find.byType(TextField), findsOneWidget);
     });
 
-    testWidgets('tapping the inert field reports the refusal', (tester) async {
+    testWidgets('tapping the inert field brings the notice back AND opens '
+        'Templates', (tester) async {
       var blocked = 0;
+      var templates = 0;
       await pump(
         tester,
         windowOpen: false,
         noticeHidden: true,
         onBlocked: () => blocked++,
+        onTemplates: () => templates++,
       );
 
       await tester.tap(find.byType(TextField));
       await tester.pump();
 
       expect(blocked, 1);
+      expect(templates, 1);
+    });
+
+    testWidgets('the notice carries the whole explanation', (tester) async {
+      await pump(tester, windowOpen: false);
+
+      expect(find.text(kWindowClosedMessage), findsOneWidget);
+      expect(find.text('Templates'), findsOneWidget);
     });
 
     testWidgets('the mic is refused while the window is closed',

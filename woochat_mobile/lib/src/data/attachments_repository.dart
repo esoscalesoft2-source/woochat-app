@@ -34,7 +34,7 @@ class AttachmentsRepository {
     required Uint8List bytes,
     required String contentType,
   }) async {
-    final path = '$authUserId/$chatId/$fileName';
+    final path = '$authUserId/$chatId/${safeObjectName(fileName)}';
     final bucket = db.storage.from(Db.attachmentsBucket);
 
     try {
@@ -56,4 +56,21 @@ class AttachmentsRepository {
     // without a session. A private bucket would need a signed URL instead.
     return bucket.getPublicUrl(path);
   }
+}
+
+/// A file name Supabase Storage will accept as an object key.
+///
+/// Storage refuses keys holding anything outside a narrow ASCII set — and a
+/// macOS screenshot is called "Screenshot 2026-09-15 at 10.46.59 AM.png"
+/// with a narrow no-break space (U+202F) before the AM, which failed every
+/// upload with "Invalid key". Everything but letters, digits, `.`, `-` and
+/// `_` becomes `_`, runs collapse, and the extension survives — the same
+/// rule the web app applies (`replace(/[^\w.-]/g, "_")`).
+String safeObjectName(String fileName) {
+  final cleaned = fileName
+      .trim()
+      .replaceAll(RegExp(r'[^A-Za-z0-9._-]+'), '_')
+      .replaceAll(RegExp(r'_+'), '_')
+      .replaceAll(RegExp(r'^[._-]+'), '');
+  return cleaned.isEmpty ? 'file' : cleaned;
 }

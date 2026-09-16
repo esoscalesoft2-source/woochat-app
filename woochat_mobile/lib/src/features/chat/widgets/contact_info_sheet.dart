@@ -1,13 +1,19 @@
 import 'package:flutter/material.dart';
 
+import '../../../data/summaries_repository.dart';
 import '../../../models/chat.dart';
+import '../../../models/chat_filters.dart';
 import '../../../theme/wa_colors.dart';
 import '../../chats/widgets/contact_avatar.dart';
 
-/// Everything known about the contact behind a chat, in one sheet.
+/// Everything known about the contact behind a chat, in one sheet — the same
+/// facts the chat row shows, spelled out: who they are, which ad they came
+/// from, what product they are on, who handles them, their labels and
+/// categories, and every note left on them.
 ///
-/// Reads only what the thread already loaded — no extra round trip when it
-/// opens.
+/// Opens as a full page, the way WhatsApp opens a contact's profile from
+/// the chat header, with the summaries laid out in full like the web's
+/// B2B panel.
 Future<void> showContactInfoSheet(
   BuildContext context, {
   required Chat chat,
@@ -15,67 +21,97 @@ Future<void> showContactInfoSheet(
   required List<String> labels,
   required List<String> categories,
   required VoidCallback onCopyNumber,
+  VoidCallback? onChangeAssignee,
+  String? contactName,
+  String? photoUrl,
+  String? productName,
+  List<Note> notes = const <Note>[],
+  Future<List<ChatSummary>> Function()? loadSummaries,
+  Future<ChatSummary> Function(String text)? addSummary,
 }) {
-  return showModalBottomSheet<void>(
-    context: context,
-    backgroundColor: Wa.sheet,
-    isScrollControlled: true,
-    showDragHandle: true,
-    shape: const RoundedRectangleBorder(
-      borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-    ),
-    builder: (context) => SafeArea(
-      top: false,
-      child: ConstrainedBox(
-        constraints: BoxConstraints(
-          maxHeight: MediaQuery.sizeOf(context).height * 0.7,
+  final name = contactName?.trim().isNotEmpty ?? false
+      ? contactName!.trim()
+      : chat.displayName;
+  final adHeadline = chat.lastAdHeadline?.trim();
+  final adThumbnail = chat.lastAdThumbnailUrl?.trim();
+  final hasAd =
+      (adHeadline?.isNotEmpty ?? false) || (adThumbnail?.isNotEmpty ?? false);
+
+  return Navigator.of(context).push<void>(
+    MaterialPageRoute<void>(
+      builder: (context) => Scaffold(
+        backgroundColor: Wa.background,
+        appBar: AppBar(
+          backgroundColor: Wa.background,
+          foregroundColor: Wa.title,
+          elevation: 0,
+          title: const Text('Contact info'),
         ),
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+        body: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
           child: Column(
-            mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
               Center(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: <Widget>[
-                    ContactAvatar(chat: chat, radius: 36),
-                    const SizedBox(height: 10),
+                    ContactAvatar(chat: chat, radius: 56, photoUrl: photoUrl),
+                    const SizedBox(height: 14),
                     Text(
-                      chat.displayName,
+                      name,
                       textAlign: TextAlign.center,
                       style: const TextStyle(
                         color: Thread.text,
-                        fontSize: 18,
+                        fontSize: 22,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
-                    if (chat.contactPhone != null) ...<Widget>[
-                      const SizedBox(height: 2),
+                    if (chat.shownPhone.isNotEmpty) ...<Widget>[
+                      const SizedBox(height: 4),
                       Text(
-                        chat.contactPhone!,
+                        chat.shownPhone,
                         style: const TextStyle(
                           color: Thread.meta,
-                          fontSize: 14,
+                          fontSize: 15,
                         ),
                       ),
                     ],
                   ],
                 ),
               ),
-              const SizedBox(height: 18),
-              if (chat.contactPhone != null)
+              const SizedBox(height: 20),
+              const Divider(height: 1, color: Wa.divider),
+              const SizedBox(height: 8),
+              if (chat.shownPhone.isNotEmpty)
                 _Row(
                   icon: Icons.copy_outlined,
                   label: 'Copy number',
-                  value: chat.contactPhone!,
+                  value: chat.shownPhone,
                   onTap: onCopyNumber,
+                ),
+              if (hasAd)
+                _Row(
+                  icon: Icons.campaign_outlined,
+                  label: 'Came from ad',
+                  value: adHeadline?.isNotEmpty ?? false
+                      ? adHeadline!
+                      : 'From ad',
+                  valueColor: Wa.accent,
+                  leadingImageUrl: adThumbnail,
+                ),
+              if (productName?.trim().isNotEmpty ?? false)
+                _Row(
+                  icon: Icons.shopping_bag_outlined,
+                  label: 'Product',
+                  value: productName!.trim(),
+                  valueColor: Wa.productChip,
                 ),
               _Row(
                 icon: Icons.person_outline,
                 label: 'Assigned to',
                 value: assignedName ?? 'Unassigned',
+                onTap: onChangeAssignee,
               ),
               _Row(
                 icon: Icons.sell_outlined,
@@ -94,6 +130,9 @@ Future<void> showContactInfoSheet(
                     ? 'No messages yet'
                     : _when(chat.lastMessageAt!),
               ),
+              _NotesSection(notes: notes),
+              if (loadSummaries != null)
+                _SummarySection(load: loadSummaries, add: addSummary),
             ],
           ),
         ),
@@ -120,15 +159,27 @@ class _Row extends StatelessWidget {
     required this.label,
     required this.value,
     this.onTap,
+    this.valueColor,
+    this.leadingImageUrl,
   });
 
   final IconData icon;
   final String label;
   final String value;
   final VoidCallback? onTap;
+  final Color? valueColor;
+
+  /// A small picture in front of the value — the ad thumbnail.
+  final String? leadingImageUrl;
 
   @override
   Widget build(BuildContext context) {
+    final text = Text(
+      value,
+      style: TextStyle(color: valueColor ?? Thread.text, fontSize: 14.5),
+    );
+    final image = leadingImageUrl;
+
     return ListTile(
       onTap: onTap,
       contentPadding: EdgeInsets.zero,
@@ -137,10 +188,307 @@ class _Row extends StatelessWidget {
         label,
         style: const TextStyle(color: Thread.meta, fontSize: 12),
       ),
-      subtitle: Text(
-        value,
-        style: const TextStyle(color: Thread.text, fontSize: 14.5),
+      subtitle: image == null || image.isEmpty
+          ? text
+          : Row(
+              children: <Widget>[
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: Image.network(
+                    image,
+                    width: 28,
+                    height: 28,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, _, _) => const SizedBox.shrink(),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(child: text),
+              ],
+            ),
+    );
+  }
+}
+
+/// Every note on the contact, newest first, or a single "None" line.
+class _NotesSection extends StatelessWidget {
+  const _NotesSection({required this.notes});
+
+  final List<Note> notes;
+
+  @override
+  Widget build(BuildContext context) {
+    if (notes.isEmpty) {
+      return const _Row(
+        icon: Icons.sticky_note_2_outlined,
+        label: 'Notes',
+        value: 'None',
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        const Padding(
+          padding: EdgeInsets.only(top: 12, bottom: 6),
+          child: Row(
+            children: <Widget>[
+              Icon(Icons.sticky_note_2_outlined, size: 20, color: Wa.icon),
+              SizedBox(width: 16),
+              Text('Notes', style: TextStyle(color: Thread.meta, fontSize: 12)),
+            ],
+          ),
+        ),
+        for (final note in notes)
+          Padding(
+            padding: const EdgeInsets.only(left: 36, bottom: 8),
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: Wa.input,
+                borderRadius: BorderRadius.circular(8),
+                border: Border(left: BorderSide(color: Wa.note, width: 3)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Text(
+                    (note.text ?? '').trim().isEmpty
+                        ? '(empty note)'
+                        : note.text!.trim(),
+                    style: const TextStyle(color: Thread.text, fontSize: 14),
+                  ),
+                  if (note.tags.isNotEmpty || note.createdAt != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text(
+                        <String>[
+                          if (note.createdAt != null)
+                            _when(note.createdAt!.toLocal()),
+                          for (final tag in note.tags) '#$tag',
+                        ].join(' · '),
+                        style: const TextStyle(
+                          color: Thread.meta,
+                          fontSize: 11.5,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// The conversation's summaries — the same list the web's B2B page and lead
+/// card show. Collapsed to one row until tapped, then slides open with the
+/// history newest first and an Add button.
+class _SummarySection extends StatefulWidget {
+  const _SummarySection({required this.load, required this.add});
+
+  final Future<List<ChatSummary>> Function() load;
+  final Future<ChatSummary> Function(String text)? add;
+
+  @override
+  State<_SummarySection> createState() => _SummarySectionState();
+}
+
+class _SummarySectionState extends State<_SummarySection> {
+  late final Future<List<ChatSummary>> _future = widget.load();
+  final _added = <ChatSummary>[];
+
+  Future<void> _add() async {
+    final text = await _askForSummary(context);
+    if (text == null || !mounted) return;
+    try {
+      final summary = await widget.add!(text);
+      if (mounted) setState(() => _added.insert(0, summary));
+    } on SummaryException catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(SnackBar(content: Text(error.message)));
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        // The section header: the same SUMMARY … Add + as the web's panel.
+        Padding(
+          padding: const EdgeInsets.only(top: 12, bottom: 4),
+          child: Row(
+            children: <Widget>[
+              const Icon(Icons.summarize_outlined, size: 20, color: Wa.icon),
+              const SizedBox(width: 16),
+              const Expanded(
+                child: Text(
+                  'Summary',
+                  style: TextStyle(color: Thread.meta, fontSize: 12),
+                ),
+              ),
+              if (widget.add != null)
+                OutlinedButton.icon(
+                  key: const ValueKey<String>('summary-add'),
+                  onPressed: _add,
+                  icon: const Icon(Icons.add, size: 16),
+                  label: const Text('Add'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Wa.accent,
+                    side: const BorderSide(color: Wa.accent),
+                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.only(left: 36, top: 4, bottom: 8),
+          child: FutureBuilder<List<ChatSummary>>(
+            future: _future,
+            builder: (context, snapshot) {
+              if (snapshot.hasError) {
+                return Text(
+                  '${snapshot.error}',
+                  style: const TextStyle(color: Wa.error, fontSize: 12.5),
+                );
+              }
+              if (!snapshot.hasData) {
+                return const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 12),
+                  child: Center(
+                    child: SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Wa.accent,
+                      ),
+                    ),
+                  ),
+                );
+              }
+              final all = <ChatSummary>[
+                ..._added,
+                ...snapshot.data!.where(
+                  (s) => !_added.any((a) => a.id == s.id),
+                ),
+              ];
+              if (all.isEmpty) {
+                return const Text(
+                  'Nothing yet.',
+                  style: TextStyle(color: Thread.meta, fontSize: 14.5),
+                );
+              }
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  for (final summary in all) _SummaryCard(summary: summary),
+                ],
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _SummaryCard extends StatelessWidget {
+  const _SummaryCard({required this.summary});
+
+  final ChatSummary summary;
+
+  @override
+  Widget build(BuildContext context) {
+    final meta = <String>[
+      if (summary.dayNumber != null) 'Day ${summary.dayNumber}',
+      if (summary.createdAt != null) _when(summary.createdAt!),
+    ].join(' · ');
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: Wa.input,
+        borderRadius: BorderRadius.circular(8),
+        border: const Border(left: BorderSide(color: Wa.accent, width: 3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text(
+            summary.text,
+            style: const TextStyle(color: Thread.text, fontSize: 14),
+          ),
+          if (meta.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                meta,
+                style: const TextStyle(color: Thread.meta, fontSize: 11.5),
+              ),
+            ),
+        ],
       ),
     );
   }
+}
+
+/// The "Add summary" box. Returns the text, or null when dismissed.
+Future<String?> _askForSummary(BuildContext context) {
+  final controller = TextEditingController();
+  return showDialog<String>(
+    context: context,
+    builder: (context) => AlertDialog(
+      backgroundColor: Wa.sheet,
+      title: const Text(
+        'Add summary',
+        style: TextStyle(color: Wa.title, fontSize: 17),
+      ),
+      content: TextField(
+        key: const ValueKey<String>('summary-text'),
+        controller: controller,
+        autofocus: true,
+        minLines: 3,
+        maxLines: 8,
+        textCapitalization: TextCapitalization.sentences,
+        style: const TextStyle(color: Wa.title, fontSize: 14.5),
+        decoration: InputDecoration(
+          hintText: 'What was discussed, what was agreed…',
+          hintStyle: const TextStyle(color: Wa.secondaryText),
+          filled: true,
+          fillColor: Wa.input,
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(8),
+            borderSide: BorderSide.none,
+          ),
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text(
+            'Cancel',
+            style: TextStyle(color: Wa.secondaryText),
+          ),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(controller.text.trim()),
+          style: FilledButton.styleFrom(
+            backgroundColor: Wa.accent,
+            foregroundColor: Wa.onAccent,
+          ),
+          child: const Text('Save'),
+        ),
+      ],
+    ),
+  ).then((value) => value == null || value.isEmpty ? null : value);
 }

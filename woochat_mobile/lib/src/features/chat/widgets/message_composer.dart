@@ -3,8 +3,13 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../../data/shortcuts_repository.dart';
+import '../../../data/templates_repository.dart';
+import '../../../models/message.dart';
 import '../../../theme/wa_colors.dart';
 import 'attach_menu.dart';
+import 'quick_replies_sheet.dart';
+import 'reply_strip.dart';
+import 'shortcut_media_tray.dart';
 import 'emoji_picker.dart';
 import 'quick_replies_panel.dart';
 import 'schedule_message_sheet.dart';
@@ -47,15 +52,25 @@ class MessageComposer extends StatefulWidget {
   const MessageComposer({
     super.key,
     required this.onSend,
+    this.replyingTo,
+    this.replyingToName,
+    this.onCancelReply,
+    this.replyWarning,
+    this.onSendShortcutMedia,
     required this.windowOpen,
     required this.onTemplates,
     required this.onAttach,
     required this.onSchedule,
+    this.lastInboundAt,
+    this.loadTemplates,
     required this.onBlocked,
     required this.onVoiceNote,
     required this.onRecorderProblem,
     this.loadQuickReplies,
     this.onCreateQuickReply,
+    this.onEditQuickReply,
+    this.onDeleteQuickReply,
+    this.canManageQuickReply,
     this.noticeHidden = false,
     this.onDismissNotice,
     this.emojiPickerBuilder,
@@ -70,6 +85,15 @@ class MessageComposer extends StatefulWidget {
   /// it was dismissed. Without it the option is reported through [onAttach].
   final Future<QuickReply?> Function()? onCreateQuickReply;
 
+  /// Opens an existing reply for changes, and removes one. Without them the
+  /// list rows carry no edit or delete icon.
+  final Future<QuickReply?> Function(QuickReply reply)? onEditQuickReply;
+  final Future<void> Function(QuickReply reply)? onDeleteQuickReply;
+
+  /// Whether the signed-in user may change a given reply.
+  final bool Function(QuickReply reply)? canManageQuickReply;
+
+
   /// Overrides the emoji panel. Only tests use this — the real picker loads
   /// its emoji set through a platform channel that never settles under
   /// `pumpAndSettle`, which would leave every composer test hanging.
@@ -77,6 +101,25 @@ class MessageComposer extends StatefulWidget {
 
   /// Returns true when the message was accepted, so the field can be cleared.
   final Future<bool> Function(String text) onSend;
+
+  /// The message being replied to, shown above the box until it is sent or
+  /// dismissed. Set by the screen when the user picks Reply on a bubble.
+  final Message? replyingTo;
+
+  /// Who wrote [replyingTo] — "You" or the contact's name.
+  final String? replyingToName;
+  final VoidCallback? onCancelReply;
+
+  /// Shown under the quote when WhatsApp cannot show it on the other side.
+  final String? replyWarning;
+
+  /// Sends a quick reply's files, then [caption] as its own final message —
+  /// the order the web app sends a shortcut bundle in. Without it a quick
+  /// reply's media is never staged and only its text is used.
+  final Future<bool> Function(
+    List<QuickReplyMedia> media,
+    String caption,
+  )? onSendShortcutMedia;
 
   /// False once 24 hours have passed since the contact's last inbound message.
   final bool windowOpen;
@@ -96,8 +139,20 @@ class MessageComposer extends StatefulWidget {
   /// An attach option other than Template Message.
   final ValueChanged<AttachOption> onAttach;
 
-  /// A moment picked in the Schedule dialog.
-  final ValueChanged<ScheduledSend> onSchedule;
+  /// A moment picked in the Schedule dialog, with what is in the box and
+  /// what is staged. Returns whether it was queued, so the box can clear.
+  final Future<bool> Function(
+    ScheduledSend scheduled,
+    String draft,
+    List<QuickReplyMedia> stagedMedia,
+  ) onSchedule;
+
+  /// When the customer last wrote in — the Schedule dialog's 24-hour rule
+  /// starts from it. The screen derives it from the live thread.
+  final DateTime? lastInboundAt;
+
+  /// The approved templates the Schedule dialog may offer.
+  final Future<List<MessageTemplate>> Function()? loadTemplates;
 
   /// Something the closed window refused — typing, emoji, an attachment.
   final VoidCallback onBlocked;
@@ -150,7 +205,14 @@ class _MessageComposerState extends State<MessageComposer> {
   bool _quickRepliesLoaded = false;
   String? _slashQuery;
 
+  /// A picked quick reply's files, waiting for Send.
+  List<QuickReplyMedia> _pendingMedia = const <QuickReplyMedia>[];
+
   bool get _hasText => _controller.text.trim().isNotEmpty;
+
+  /// Staged files are something to send even when nothing is typed, so the
+  /// mic gives way to the send arrow.
+  bool get _hasSomethingToSend => _hasText || _pendingMedia.isNotEmpty;
   bool get _blocked => !widget.windowOpen;
   bool get _recording => _recorder != null;
 
@@ -189,12 +251,18 @@ class _MessageComposerState extends State<MessageComposer> {
     }
   }
 
-  /// Swaps the typed `/token` for the reply itself, ready to edit or send.
+  /// Puts the reply's text in the box and its files in the tray, ready to
+  /// edit or send. Nothing is sent yet — Send does that.
   void _useQuickReply(QuickReply reply) {
     _controller
       ..text = reply.message
       ..selection = TextSelection.collapsed(offset: reply.message.length);
-    setState(() => _slashQuery = null);
+    setState(() {
+      _slashQuery = null;
+      _pendingMedia = widget.onSendShortcutMedia == null
+          ? const <QuickReplyMedia>[]
+          : reply.media;
+    });
     _focusNode.requestFocus();
   }
 
@@ -204,15 +272,24 @@ class _MessageComposerState extends State<MessageComposer> {
     widget.onBlocked();
   }
 
+  /// The closed window's one way out. The notice comes back too, in case it
+  /// had been hidden, so the reason is on screen beside the picker.
+  void _openTemplatesForClosedWindow() {
+    if (_emojiOpen) setState(() => _emojiOpen = false);
+    widget.onBlocked();
+    widget.onTemplates();
+  }
+
   void _onAttachSelected(AttachOption option) {
     // Templates are the way out of a closed window, so they always work.
     if (option == AttachOption.template) {
       widget.onTemplates();
       return;
     }
-    // Saving a quick reply sends nothing, so the window does not apply.
+    // Quick replies only fill the message box, so the window does not apply
+    // — the send itself is still refused if it is closed.
     if (option == AttachOption.quickReply) {
-      _createQuickReply();
+      _openQuickReplies();
       return;
     }
     if (_blocked) {
@@ -222,17 +299,67 @@ class _MessageComposerState extends State<MessageComposer> {
     widget.onAttach(option);
   }
 
-  /// Opens the New quick reply sheet and, once one is saved, puts it straight
-  /// into the `/` menu without a refetch.
-  Future<void> _createQuickReply() async {
-    final create = widget.onCreateQuickReply;
-    if (create == null) {
+  /// The + menu's Quick Replies: the saved list, with its own + for writing a
+  /// new one. Picking puts the reply straight into the message box, the same
+  /// as choosing one from the `/` menu.
+  Future<void> _openQuickReplies() async {
+    final load = widget.loadQuickReplies;
+    if (load == null) {
       widget.onAttach(AttachOption.quickReply);
       return;
     }
 
+    final picked = await showQuickRepliesSheet(
+      context,
+      load: () async {
+        final replies = await load();
+        if (mounted) {
+          setState(() {
+            _quickReplies = replies;
+            _quickRepliesLoaded = true;
+          });
+        }
+        return replies;
+      },
+      create: widget.onCreateQuickReply == null ? null : _createQuickReply,
+      edit: widget.onEditQuickReply == null ? null : _editQuickReply,
+      delete: widget.onDeleteQuickReply,
+      canManage: widget.canManageQuickReply,
+    );
+    if (picked == null || !mounted) return;
+    _useQuickReply(picked);
+  }
+
+  /// Opens a saved reply for changes and swaps the updated one into the `/`
+  /// menu, so both lists agree without a refetch.
+  Future<QuickReply?> _editQuickReply(QuickReply reply) async {
+    final updated = await widget.onEditQuickReply!(reply);
+    if (updated == null || !mounted) return null;
+
+    setState(() {
+      _quickReplies = <QuickReply>[
+        for (final existing in _quickReplies)
+          if (existing.id == updated.id) updated else existing,
+      ]..sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
+      // Staged files could belong to the reply that just changed.
+      if (_pendingMedia.isNotEmpty) {
+        _pendingMedia = const <QuickReplyMedia>[];
+      }
+    });
+    return updated;
+  }
+
+  /// Opens the New quick reply sheet and, once one is saved, puts it straight
+  /// into the `/` menu without a refetch.
+  Future<QuickReply?> _createQuickReply() async {
+    final create = widget.onCreateQuickReply;
+    if (create == null) {
+      widget.onAttach(AttachOption.quickReply);
+      return null;
+    }
+
     final reply = await create();
-    if (reply == null || !mounted) return;
+    if (reply == null || !mounted) return null;
 
     setState(() {
       // If the list was never fetched, the first `/` will fetch it — with
@@ -242,14 +369,35 @@ class _MessageComposerState extends State<MessageComposer> {
           ..sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
       }
     });
+    return reply;
   }
 
+  /// The clock: queue what is in the box (or staged) for later. Unlike Send
+  /// this is allowed while the window is closed — the dialog then insists
+  /// on a template, which is exactly what a closed window needs.
   Future<void> _openSchedule() async {
+    if (_emojiOpen) setState(() => _emojiOpen = false);
     final scheduled = await showScheduleMessageSheet(
       context,
       draft: _controller.text,
+      hasStagedMedia: _pendingMedia.isNotEmpty,
+      lastInboundAt: widget.lastInboundAt,
+      loadTemplates: widget.loadTemplates ?? () async => const <MessageTemplate>[],
     );
-    if (scheduled != null && mounted) widget.onSchedule(scheduled);
+    if (scheduled == null || !mounted) return;
+
+    final queued = await widget.onSchedule(
+      scheduled,
+      _controller.text.trim(),
+      _pendingMedia,
+    );
+    if (queued && mounted) {
+      setState(() {
+        _controller.clear();
+        _slashQuery = null;
+        _pendingMedia = const <QuickReplyMedia>[];
+      });
+    }
   }
 
   @override
@@ -349,7 +497,8 @@ class _MessageComposerState extends State<MessageComposer> {
 
   Future<void> _send() async {
     final text = _controller.text.trim();
-    if (text.isEmpty || _sending) return;
+    final media = _pendingMedia;
+    if ((text.isEmpty && media.isEmpty) || _sending) return;
     if (_blocked) {
       _refuse();
       return;
@@ -357,10 +506,17 @@ class _MessageComposerState extends State<MessageComposer> {
 
     setState(() => _sending = true);
     try {
-      if (await widget.onSend(text)) {
+      // Staged files go first, with whatever is still in the box as the
+      // message after them — the agent may have edited or erased the text
+      // the quick reply seeded, and only what is there now is sent.
+      final sent = media.isEmpty
+          ? await widget.onSend(text)
+          : await widget.onSendShortcutMedia!(media, text);
+      if (sent) {
         _controller.clear();
         // A sent message can leave a stale slash query behind it.
         _slashQuery = null;
+        _pendingMedia = const <QuickReplyMedia>[];
       }
     } finally {
       if (mounted) {
@@ -410,6 +566,20 @@ class _MessageComposerState extends State<MessageComposer> {
                     loading: _quickRepliesLoading,
                     onPick: _useQuickReply,
                   ),
+                if (widget.replyingTo != null)
+                  ReplyStrip(
+                    message: widget.replyingTo!,
+                    authorName: widget.replyingToName ?? '',
+                    warning: widget.replyWarning,
+                    onCancel: widget.onCancelReply ?? () {},
+                  ),
+                ShortcutMediaTray(
+                  media: _pendingMedia,
+                  hasCaption: _hasText,
+                  sending: _sending,
+                  onClear: () =>
+                      setState(() => _pendingMedia = const <QuickReplyMedia>[]),
+                ),
                 Padding(
                   padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
                   child: _inputBar(),
@@ -449,12 +619,12 @@ class _MessageComposerState extends State<MessageComposer> {
         ),
         const SizedBox(width: 8),
         _SendOrMicButton(
-          hasText: _hasText,
+          hasText: _hasSomethingToSend,
           recording: _recording,
           sending: _sending,
           onPressed: _recording
               ? _finishRecording
-              : (_hasText ? _send : _startRecording),
+              : (_hasSomethingToSend ? _send : _startRecording),
         ),
       ],
     );
@@ -492,9 +662,11 @@ class _MessageComposerState extends State<MessageComposer> {
                     // tapping explains itself rather than doing nothing.
                     readOnly: _blocked,
                     // Focusing the field raises the keyboard, so the panel
-                    // has to give way or the two stack up.
+                    // has to give way or the two stack up. With the window
+                    // closed a tap goes straight to Templates — the only
+                    // thing that can be sent — rather than to a dead field.
                     onTap: _blocked
-                        ? _refuse
+                        ? _openTemplatesForClosedWindow
                         : (_emojiOpen
                             ? () => setState(() => _emojiOpen = false)
                             : null),
@@ -762,10 +934,12 @@ class _WindowNotice extends StatelessWidget {
           const Icon(Icons.warning_amber_rounded,
               size: 16, color: Thread.warning),
           const SizedBox(width: 6),
+          // The whole explanation lives here, in the card, rather than a
+          // headline here and the sentence in a toast underneath.
           const Expanded(
             child: Text(
-              '24-hour window expired',
-              maxLines: 1,
+              kWindowClosedMessage,
+              maxLines: 3,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(color: Thread.text, fontSize: 12.5),
             ),

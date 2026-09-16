@@ -10,7 +10,10 @@ import 'create_template_sheet.dart';
 /// Only APPROVED templates can be sent outside the 24-hour window, so only
 /// those are listed — the same filter the web app applies. A template made
 /// here goes to Meta for review, so it joins the list once approved.
-Future<void> showTemplatesSheet(
+///
+/// Tapping a template closes this sheet and hands the template back, so the
+/// caller can collect its values and send it. Null when dismissed.
+Future<MessageTemplate?> showTemplatesSheet(
   BuildContext context, {
   required Future<List<MessageTemplate>> Function() load,
   required String chatName,
@@ -18,7 +21,7 @@ Future<void> showTemplatesSheet(
   Future<SavedParameter> Function(String name)? saveParameter,
   Future<void> Function(TemplateDraft draft)? create,
 }) {
-  return showModalBottomSheet<void>(
+  return showModalBottomSheet<MessageTemplate>(
     context: context,
     backgroundColor: Thread.composer,
     isScrollControlled: true,
@@ -167,6 +170,7 @@ class _TemplatesSheetState extends State<_TemplatesSheet> {
                     itemBuilder: (context, index) {
                       final template = templates[index];
                       return ListTile(
+                        onTap: () => Navigator.of(context).pop(template),
                         leading: const Icon(
                           Icons.description_outlined,
                           color: Wa.accent,
@@ -194,8 +198,7 @@ class _TemplatesSheetState extends State<_TemplatesSheet> {
             const Padding(
               padding: EdgeInsets.fromLTRB(16, 8, 16, 16),
               child: Text(
-                'Sending a template needs its parameter values and a separate '
-                'call shape — not wired up yet.',
+                'Tap a template to fill in its values and send it.',
                 style: TextStyle(color: Thread.meta, fontSize: 11),
               ),
             ),

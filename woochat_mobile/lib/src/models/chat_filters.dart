@@ -78,15 +78,22 @@ class Automation {
 }
 
 class Note {
-  const Note({required this.id, this.text, this.tags = const <String>[]});
+  const Note({
+    required this.id,
+    this.text,
+    this.tags = const <String>[],
+    this.createdAt,
+  });
 
   final String id;
   final String? text;
   final List<String> tags;
+  final DateTime? createdAt;
 
   factory Note.fromMap(Map<String, dynamic> map) => Note(
         id: map['id'].toString(),
         text: map['note_text'] as String?,
+        createdAt: DateTime.tryParse(map['created_at']?.toString() ?? ''),
         tags: (map['tags'] as List<dynamic>? ?? const <dynamic>[])
             .map((tag) => tag.toString())
             .where((tag) => tag.trim().isNotEmpty)
@@ -140,7 +147,9 @@ class ChatFilterData {
     this.notesByContactId = const <String, List<Note>>{},
     this.contactLabelIdsByPhone = const <String, List<String>>{},
     this.contactPhotoByPhone = const <String, String>{},
+    this.contactNameByPhone = const <String, String>{},
     this.noteTags = const <String>[],
+    this.notes = const <Note>[],
   });
 
   final List<Label> labels;
@@ -174,7 +183,14 @@ class ChatFilterData {
   /// `profile_photo_url`, matching the web app.
   final Map<String, String> contactPhotoByPhone;
 
+  /// The Contacts-page name per phone, e.g. "Fi00008-Loki".
+  final Map<String, String> contactNameByPhone;
+
   final List<String> noteTags;
+
+  /// The whole note library, newest first — what the Notes menu offers to
+  /// attach.
+  final List<Note> notes;
 
   /// The photo to show for a chat: the contact record first, then the chat's
   /// own column, then null so the coloured placeholder is used.
@@ -187,32 +203,147 @@ class ChatFilterData {
 
   static const ChatFilterData empty = ChatFilterData();
 
+  ChatFilterData copyWith({
+    List<Label>? labels,
+    Map<String, List<String>>? labelIdsByChat,
+    Map<String, DateTime>? labelAppliedAt,
+    List<Category>? categories,
+    Map<String, List<String>>? categoryIdsByChat,
+    List<Product>? products,
+    Map<String, String>? collectionProductIdByPhone,
+    Map<String, String>? productIdByAdHeadline,
+    List<Automation>? automations,
+    Set<String>? adSourcedChatIds,
+    Set<String>? funnelFailed,
+    Set<String>? funnelReplied,
+    Map<String, String>? contactIdByPhone,
+    Map<String, List<Note>>? notesByContactId,
+    Map<String, List<String>>? contactLabelIdsByPhone,
+    Map<String, String>? contactPhotoByPhone,
+    Map<String, String>? contactNameByPhone,
+    List<String>? noteTags,
+    List<Note>? notes,
+  }) =>
+      ChatFilterData(
+        labels: labels ?? this.labels,
+        labelIdsByChat: labelIdsByChat ?? this.labelIdsByChat,
+        labelAppliedAt: labelAppliedAt ?? this.labelAppliedAt,
+        categories: categories ?? this.categories,
+        categoryIdsByChat: categoryIdsByChat ?? this.categoryIdsByChat,
+        products: products ?? this.products,
+        collectionProductIdByPhone:
+            collectionProductIdByPhone ?? this.collectionProductIdByPhone,
+        productIdByAdHeadline:
+            productIdByAdHeadline ?? this.productIdByAdHeadline,
+        automations: automations ?? this.automations,
+        adSourcedChatIds: adSourcedChatIds ?? this.adSourcedChatIds,
+        funnelFailed: funnelFailed ?? this.funnelFailed,
+        funnelReplied: funnelReplied ?? this.funnelReplied,
+        contactIdByPhone: contactIdByPhone ?? this.contactIdByPhone,
+        notesByContactId: notesByContactId ?? this.notesByContactId,
+        contactLabelIdsByPhone:
+            contactLabelIdsByPhone ?? this.contactLabelIdsByPhone,
+        contactPhotoByPhone: contactPhotoByPhone ?? this.contactPhotoByPhone,
+        contactNameByPhone: contactNameByPhone ?? this.contactNameByPhone,
+        noteTags: noteTags ?? this.noteTags,
+        notes: notes ?? this.notes,
+      );
+
   /// Swaps in freshly fetched funnel sets, which are the only part that moves
-  /// with the date range. Copying field-by-field at the call site silently
-  /// dropped whatever was added later, so it lives here instead.
+  /// with the date range.
   ChatFilterData withFunnel({
     required Set<String> failed,
     required Set<String> replied,
   }) =>
-      ChatFilterData(
-        labels: labels,
-        labelIdsByChat: labelIdsByChat,
-        labelAppliedAt: labelAppliedAt,
-        categories: categories,
-        categoryIdsByChat: categoryIdsByChat,
-        products: products,
-        collectionProductIdByPhone: collectionProductIdByPhone,
-        productIdByAdHeadline: productIdByAdHeadline,
-        automations: automations,
-        adSourcedChatIds: adSourcedChatIds,
-        funnelFailed: failed,
-        funnelReplied: replied,
-        contactIdByPhone: contactIdByPhone,
-        notesByContactId: notesByContactId,
-        contactLabelIdsByPhone: contactLabelIdsByPhone,
-        contactPhotoByPhone: contactPhotoByPhone,
-        noteTags: noteTags,
+      copyWith(funnelFailed: failed, funnelReplied: replied);
+
+  /// The same data with one chat's label or category rows replaced, after a
+  /// toggle from the row menu — cheaper than reloading every table.
+  ChatFilterData withChatTags({
+    required String chatId,
+    List<String>? labelIds,
+    List<String>? categoryIds,
+  }) =>
+      copyWith(
+        labelIdsByChat: labelIds == null
+            ? null
+            : <String, List<String>>{...labelIdsByChat, chatId: labelIds},
+        categoryIdsByChat: categoryIds == null
+            ? null
+            : <String, List<String>>{...categoryIdsByChat, chatId: categoryIds},
       );
+
+  /// The hand-picked product on one customer replaced, or cleared with null.
+  ChatFilterData withCollectionProduct(
+    String normalisedPhone,
+    String? productId,
+  ) {
+    final next = <String, String>{...collectionProductIdByPhone};
+    if (productId == null) {
+      next.remove(normalisedPhone);
+    } else {
+      next[normalisedPhone] = productId;
+    }
+    return copyWith(collectionProductIdByPhone: next);
+  }
+
+  /// One contact's attached notes replaced, newest first.
+  ChatFilterData withContactNotes(String contactId, List<Note> attached) =>
+      copyWith(
+        notesByContactId: <String, List<Note>>{
+          ...notesByContactId,
+          contactId: attached,
+        },
+      );
+
+  /// A freshly written note put at the top of the library.
+  ChatFilterData withNote(Note note) => copyWith(
+        notes: <Note>[note, ...notes.where((n) => n.id != note.id)],
+      );
+
+  /// The name the row shows: the Contacts-page name so both surfaces read the
+  /// same source, falling back to the chat's own name only when the customer
+  /// has no contact record.
+  String nameFor(String normalisedPhone, String fallback) {
+    final fromContact = contactNameByPhone[normalisedPhone]?.trim();
+    return (fromContact != null && fromContact.isNotEmpty)
+        ? fromContact
+        : fallback;
+  }
+
+  /// The product the row's 🛍 chip names, or null when there is none.
+  String? productNameForChat(String normalisedPhone, String? adHeadline) {
+    final id = productIdForChat(normalisedPhone, adHeadline);
+    if (id == null) return null;
+    for (final product in products) {
+      if (product.id == id) return product.title;
+    }
+    return null;
+  }
+
+  /// The newest note on this customer. Lists are kept newest-first.
+  Note? latestNoteFor(String normalisedPhone) {
+    final contactId = contactIdByPhone[normalisedPhone];
+    if (contactId == null) return null;
+    final notes = notesByContactId[contactId];
+    return (notes == null || notes.isEmpty) ? null : notes.first;
+  }
+
+  /// Colours of every label on the chat, for the dots after the name. Labels
+  /// the tenant cannot see are skipped rather than drawn colourless.
+  List<String> labelColorsForChat(String chatId, String normalisedPhone) {
+    final colors = <String>[];
+    for (final id in labelIdsForChat(chatId, normalisedPhone)) {
+      for (final label in labels) {
+        if (label.id == id) {
+          final color = label.color?.trim();
+          if (color != null && color.isNotEmpty) colors.add(color);
+          break;
+        }
+      }
+    }
+    return colors;
+  }
 
   /// Labels collapsed to one entry per name — tenant users each own their own
   /// rows, so an admin would otherwise see the same name repeatedly.

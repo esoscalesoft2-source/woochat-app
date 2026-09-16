@@ -1,29 +1,42 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
+import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/constants.dart';
+import '../../data/attachment_picker.dart';
 import '../../data/attachments_repository.dart';
 import '../../data/chat_assignment_repository.dart';
 import '../../data/chat_tags_repository.dart';
+import '../../data/chats_repository.dart';
+import '../../data/contact_context_repository.dart';
 import '../../data/leads_repository.dart';
 import '../../data/messages_repository.dart';
 import '../../data/shortcuts_repository.dart';
+import '../../data/summaries_repository.dart';
 import '../../data/templates_repository.dart';
 import '../../models/chat.dart';
+import '../../models/chat_filters.dart';
 import '../../models/message.dart';
 import '../../models/tenant_context.dart';
 import '../../theme/wa_colors.dart';
 import '../chats/widgets/contact_avatar.dart';
+import 'forward_compose.dart';
 import 'thread_items.dart';
 import 'widgets/assign_chat_sheet.dart';
 import 'widgets/attach_menu.dart';
+import 'widgets/attachment_preview_sheet.dart';
 import 'widgets/chat_tags_sheet.dart';
 import 'widgets/contact_info_sheet.dart';
 import 'widgets/create_quick_reply_sheet.dart';
+import 'widgets/forward_sheet.dart';
+import 'widgets/image_viewer.dart';
 import 'widgets/message_bubble.dart';
 import 'widgets/message_composer.dart';
 import 'widgets/schedule_message_sheet.dart';
+import 'widgets/send_template_sheet.dart';
 import 'widgets/templates_sheet.dart';
 import 'widgets/voice_recorder.dart';
 
@@ -46,9 +59,11 @@ class _ChatScreenState extends State<ChatScreen> {
   final _repository = const MessagesRepository();
   final _templates = const TemplatesRepository();
   final _attachments = const AttachmentsRepository();
+  final _picker = const AttachmentPicker();
   final _tags = const ChatTagsRepository();
   final _shortcuts = const ShortcutsRepository();
   final _leads = const LeadsRepository();
+  final _summaries = const SummariesRepository();
   final _searchController = TextEditingController();
 
   /// The chat's labels and categories. Loaded once the thread opens; the
@@ -56,14 +71,21 @@ class _ChatScreenState extends State<ChatScreen> {
   ChatTags _chatTags = ChatTags.empty;
   bool _tagsLoaded = false;
 
+  /// The Contacts record, product and notes behind this chat, for the info
+  /// sheet. Loaded once the thread opens; the sheet shows what has arrived.
+  final _contactContext = const ContactContextRepository();
+  ContactContext _contact = ContactContext.empty;
+  final _chats = const ChatsRepository();
+
   /// `chats.assigned_to` for this chat, and the people it can point at.
   final _assignments = const ChatAssignmentRepository();
   String? _assignedTo;
   List<TeamMember> _members = const <TeamMember>[];
   bool _assignmentLoaded = false;
 
-  late final Stream<List<Message>> _messages =
-      _repository.watchMessages(widget.chat.id);
+  late final Stream<List<Message>> _messages = _repository.watchMessages(
+    widget.chat.id,
+  );
 
   bool _searching = false;
   String _query = '';
@@ -73,9 +95,10 @@ class _ChatScreenState extends State<ChatScreen> {
   /// explanation is wanted.
   bool _noticeHidden = false;
 
+  /// Brings the orange notice back; the explanation is written on it, so
+  /// nothing else needs saying.
   void _onWindowBlocked() {
     setState(() => _noticeHidden = false);
-    _notify(kWindowClosedMessage);
   }
 
   @override
@@ -83,6 +106,16 @@ class _ChatScreenState extends State<ChatScreen> {
     super.initState();
     _loadTags();
     _loadAssignment();
+    _loadContactContext();
+  }
+
+  Future<void> _loadContactContext() async {
+    try {
+      final context = await _contactContext.load(widget.chat);
+      if (mounted) setState(() => _contact = context);
+    } catch (_) {
+      // The sheet still opens with what the chat row itself carries.
+    }
   }
 
   Future<void> _loadAssignment() async {
@@ -168,34 +201,40 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _openLabels() => _openTagPicker(
-        title: 'Labels',
-        emptyMessage: 'No labels exist in this workspace yet.',
-        options: <TagOption>[
-          for (final label in _chatTags.labels)
-            TagOption(id: label.id, name: label.name, color: label.color),
-        ],
-        selected: _chatTags.labelIds,
-        write: (id, applied) =>
-            _tags.setLabel(widget.chat.id, id, applied: applied),
-        commit: (ids) => _chatTags = _chatTags.copyWith(labelIds: ids),
-      );
+    title: 'Labels',
+    emptyMessage: 'No labels exist in this workspace yet.',
+    options: <TagOption>[
+      for (final label in _chatTags.labels)
+        TagOption(id: label.id, name: label.name, color: label.color),
+    ],
+    selected: _chatTags.labelIds,
+    write: (id, applied) => _tags.setLabel(
+      widget.chat.id,
+      id,
+      applied: applied,
+      chatOwnerId: widget.chat.userId,
+      authUserId: widget.tenantContext.authUserId,
+    ),
+    commit: (ids) => _chatTags = _chatTags.copyWith(labelIds: ids),
+  );
 
   Future<void> _openCategories() => _openTagPicker(
-        title: 'Categories',
-        emptyMessage: 'No categories exist in this workspace yet.',
-        options: <TagOption>[
-          for (final category in _chatTags.categories)
-            TagOption(
-              id: category.id,
-              name: category.name,
-              color: category.color,
-            ),
-        ],
-        selected: _chatTags.categoryIds,
-        write: (id, applied) =>
-            _tags.setCategory(widget.chat.id, id, applied: applied),
-        commit: (ids) => _chatTags = _chatTags.copyWith(categoryIds: ids),
-      );
+    title: 'Categories',
+    emptyMessage: 'No categories exist in this workspace yet.',
+    options: <TagOption>[
+      for (final category in _chatTags.categories)
+        TagOption(id: category.id, name: category.name, color: category.color),
+    ],
+    selected: _chatTags.categoryIds,
+    write: (id, applied) => _tags.setCategory(
+      widget.chat.id,
+      id,
+      applied: applied,
+      chatOwnerId: widget.chat.userId,
+      authUserId: widget.tenantContext.authUserId,
+    ),
+    commit: (ids) => _chatTags = _chatTags.copyWith(categoryIds: ids),
+  );
 
   /// Shared plumbing for both pickers: each toggle writes immediately, and the
   /// header only follows the rows that actually landed.
@@ -263,13 +302,29 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _openContactInfo() async {
+    // Labels on the chat plus any held on the contact record itself, the
+    // same union the list row draws as dots.
+    final labelIds = <String>{
+      ..._chatTags.labelIds,
+      ..._contact.contactLabelIds,
+    };
     await showContactInfoSheet(
       context,
       chat: widget.chat,
+      contactName: _contact.name,
+      photoUrl: _contact.photoUrl,
+      productName: _contact.productName,
+      notes: _contact.notes,
+      loadSummaries: () => _summaries.forChat(widget.chat.id),
+      addSummary: (text) => _summaries.add(
+        chatId: widget.chat.id,
+        authUserId: widget.tenantContext.authUserId,
+        text: text,
+      ),
       assignedName: _assignedName,
       labels: <String>[
         for (final label in _chatTags.labels)
-          if (_chatTags.labelIds.contains(label.id)) label.name,
+          if (labelIds.contains(label.id)) label.name,
       ],
       categories: <String>[
         for (final category in _chatTags.categories)
@@ -277,7 +332,11 @@ class _ChatScreenState extends State<ChatScreen> {
       ],
       onCopyNumber: () {
         Navigator.of(context).pop();
-        _copyPhone();
+        unawaited(_copyPhone());
+      },
+      onChangeAssignee: () {
+        Navigator.of(context).pop();
+        _openAssign();
       },
     );
   }
@@ -343,29 +402,322 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  // ---- Message actions ---------------------------------------------------
+
+  /// Holding a bubble: forward it, or copy its text.
+  Future<void> _openMessageActions(Message message) async {
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: Wa.sheet,
+      showDragHandle: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            ListTile(
+              leading: const Icon(Icons.reply, color: Wa.icon),
+              title: const Text('Reply',
+                  style: TextStyle(color: Wa.title, fontSize: 15)),
+              onTap: () => Navigator.of(context).pop('reply'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.shortcut, color: Wa.icon),
+              title: const Text('Forward',
+                  style: TextStyle(color: Wa.title, fontSize: 15)),
+              onTap: () => Navigator.of(context).pop('forward'),
+            ),
+            if (message.body.isNotEmpty)
+              ListTile(
+                leading: const Icon(Icons.copy_outlined, color: Wa.icon),
+                title: const Text('Copy text',
+                    style: TextStyle(color: Wa.title, fontSize: 15)),
+                onTap: () => Navigator.of(context).pop('copy'),
+              ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+    if (action == null || !mounted) return;
+
+    switch (action) {
+      case 'reply':
+        setState(() => _replyingTo = message);
+      case 'forward':
+        await _forward(message);
+      case 'copy':
+        await Clipboard.setData(ClipboardData(text: message.body));
+        _notify('Copied');
+    }
+  }
+
+  /// WhatsApp's forward: pick chats, then the message goes to each as a new
+  /// outbound message. Media is forwarded by its stored URL — nothing is
+  /// downloaded or uploaded again — which is exactly what the web app does.
+  Future<void> _forward(Message message) async {
+    final content = (message.content ?? '').trim();
+    if (content.isEmpty) {
+      _showError('There is nothing to forward in this message.');
+      return;
+    }
+
+    // Names and photos come from the contact directory, so the picker reads
+    // the same as the chat list ("Fi17281-vilokshana", not the WhatsApp name).
+    Map<String, DirectoryEntry> directory = const <String, DirectoryEntry>{};
+    final choice = await showForwardSheet(
+      context,
+      message: message,
+      exclude: widget.chat,
+      loadChats: () async {
+        final results = await Future.wait<Object>(<Future<Object>>[
+          _chats.fetchChats(tenantAdminId: widget.tenantContext.tenantAdminId),
+          _contactContext.directory(),
+        ]);
+        directory = results[1] as Map<String, DirectoryEntry>;
+        return results[0] as List<Chat>;
+      },
+      nameOf: (chat) {
+        final name = directory[chat.normalisedPhone]?.name?.trim();
+        return (name == null || name.isEmpty) ? chat.displayName : name;
+      },
+      photoOf: (chat) => directory[chat.normalisedPhone]?.photoUrl,
+    );
+    if (choice == null || choice.chats.isEmpty || !mounted) return;
+    final targets = choice.chats;
+
+    // The typed message folded in — as the caption on media, appended on
+    // text — so each chat gets one message. See composeForward.
+    final composed = composeForward(message, note: choice.note);
+    final outgoing = composed.content;
+    final media = composed.media;
+
+    _notify(
+      'Forwarding to ${targets.length} chat${targets.length == 1 ? '' : 's'}…',
+    );
+    var failed = 0;
+    for (final target in targets) {
+      try {
+        await _repository.sendTextMessage(
+          chatId: target.id,
+          senderUserId: widget.tenantContext.authUserId,
+          chatOwnerUserId: target.userId,
+          content: outgoing,
+          contactPhone: target.contactPhone,
+          media: media,
+        );
+      } on MessageSendException {
+        // The row is in that chat marked failed with its reason.
+        failed++;
+      } catch (_) {
+        failed++;
+      }
+    }
+    if (!mounted) return;
+    if (failed == 0) {
+      _notify('Forwarded to ${targets.length} chat${targets.length == 1 ? '' : 's'}.');
+    } else {
+      _showError('$failed of ${targets.length} could not be sent.');
+    }
+  }
+
+  /// Rows this screen inserted that the realtime feed has not echoed back
+  /// yet, so a sent message is on screen the instant it is stored rather
+  /// than a round trip later. Each is dropped once the feed carries it.
+  final _pending = <String, Message>{};
+
+  /// The message the next send will quote, once Reply is picked on it.
+  Message? _replyingTo;
+
+  /// Quoted messages the thread itself does not hold, fetched on demand and
+  /// kept. Ids already asked for are remembered so a quote of something
+  /// deleted is not re-fetched on every build.
+  final _quotedExtra = <String, Message>{};
+  final _quotedRequested = <String>{};
+
+  /// Any quoted ids missing from [byId] are fetched once; the thread
+  /// rebuilds with them when they land.
+  void _resolveMissingQuotes(List<Message> visible, Map<String, Message> byId) {
+    final missing = <String>{
+      for (final message in visible)
+        if (message.replyToMessageId case final id?)
+          if (!byId.containsKey(id) && !_quotedRequested.contains(id)) id,
+    };
+    if (missing.isEmpty) return;
+    _quotedRequested.addAll(missing);
+    unawaited(_repository.fetchByIds(missing).then((found) {
+      if (!mounted || found.isEmpty) return;
+      setState(() {
+        for (final message in found) {
+          _quotedExtra[message.id] = message;
+        }
+      });
+    }).catchError((Object _) {
+      // Left blank rather than retried in a loop; the thread still reads.
+    }));
+  }
+
+  String _authorOf(Message message) =>
+      message.isOutbound ? 'You' : widget.chat.displayName;
+
+  /// Sends typed text the way WhatsApp does: the row is stored, the box
+  /// clears and the bubble shows with its clock — all in one short insert —
+  /// and the slow WhatsApp round trip runs behind it. Waiting on that trip
+  /// used to hold the composer for seconds on every message.
   Future<bool> _send(String text) async {
+    final quoted = _replyingTo;
+    final Message message;
     try {
-      await _repository.sendTextMessage(
+      message = await _repository.insertOutbound(
         chatId: widget.chat.id,
         // The row is authored by whoever is signed in; the edge function needs
         // the chat's owner separately to resolve the sending number.
         senderUserId: widget.tenantContext.authUserId,
-        chatOwnerUserId: widget.chat.userId,
         content: text,
-        contactPhone: widget.chat.contactPhone,
+        replyToMessageId: quoted?.id,
       );
-      return true;
-    } on MessageSendException catch (error) {
-      // The row was inserted and is now marked failed, so it is visible in the
-      // thread — clearing the composer loses nothing.
-      _showError(error.message);
-      return true;
     } catch (error) {
-      // The insert itself failed, so nothing was persisted anywhere. Keep the
-      // typed text so the user can retry instead of losing it.
+      // Nothing was persisted anywhere. Keep the typed text so the user can
+      // retry instead of losing it.
       _showError('Could not send the message: $error');
       return false;
     }
+
+    if (mounted) {
+      setState(() {
+        _pending[message.id] = message;
+        _replyingTo = null;
+      });
+    }
+    unawaited(_deliverInBackground(message, quoted: quoted));
+    return true;
+  }
+
+  Future<void> _deliverInBackground(Message message, {Message? quoted}) async {
+    try {
+      await _repository.deliver(
+        message,
+        chatOwnerUserId: widget.chat.userId,
+        contactPhone: widget.chat.contactPhone,
+        // WhatsApp draws the quote on the customer's phone only when told
+        // which of ITS messages is being answered; a quoted message that
+        // never reached WhatsApp (still sending, or failed) has no such id
+        // and the reply goes out plain, as the web app's does.
+        replyToWhatsAppMessageId: quoted?.whatsappMessageId,
+      );
+    } on MessageSendException catch (error) {
+      // The row is already marked failed, so the bubble shows the reason;
+      // the toast just makes sure it is noticed.
+      _showError(error.message);
+    }
+  }
+
+  /// One item of an outbound set: what the row stores, and the media (by
+  /// URL) WhatsApp is handed for it.
+  ///
+  /// Sends a set the way WhatsApp feels: ONE insert puts every bubble on
+  /// screen at once, then every WhatsApp call fires together in the
+  /// background and each tick updates as Meta answers. Waiting on each
+  /// round-trip in turn is what made a photo set crawl out one at a time.
+  Future<void> _dispatchSet(
+    List<({String content, OutboundMedia? media})> items, {
+    Message? quoted,
+  }) async {
+    if (items.isEmpty) return;
+    final List<Message> rows;
+    try {
+      rows = await _repository.insertOutboundMany(
+        chatId: widget.chat.id,
+        senderUserId: widget.tenantContext.authUserId,
+        contents: <String>[for (final item in items) item.content],
+        replyToMessageId: quoted?.id,
+      );
+    } catch (error) {
+      _showError('Could not send: $error');
+      return;
+    }
+    if (mounted) {
+      setState(() {
+        for (final row in rows) {
+          _pending[row.id] = row;
+        }
+        _replyingTo = null;
+      });
+    }
+
+    // All at once, not one after another. Failures are already on their
+    // bubbles; one toast covers the lot.
+    unawaited(() async {
+      var failed = 0;
+      await Future.wait(<Future<void>>[
+        for (var i = 0; i < rows.length; i++)
+          _repository
+              .deliver(
+                rows[i],
+                chatOwnerUserId: widget.chat.userId,
+                contactPhone: widget.chat.contactPhone,
+                media: items[i].media,
+                replyToWhatsAppMessageId:
+                    i == 0 ? quoted?.whatsappMessageId : null,
+              )
+              .catchError((Object _) => failed++),
+      ]);
+      if (failed > 0 && mounted) {
+        _showError(
+          rows.length == 1
+              ? 'The message could not be sent — see the reason on it.'
+              : '$failed of ${rows.length} could not be sent — see the '
+                  'reasons on them.',
+        );
+      }
+    }());
+  }
+
+  /// Older messages paged in above the live feed, oldest first.
+  final _older = <Message>[];
+  bool _loadingOlder = false;
+
+  /// False once a page comes back short — there is nothing further back.
+  bool _mayHaveOlder = true;
+
+  Future<void> _loadOlder(List<Message> shown) async {
+    if (_loadingOlder || !_mayHaveOlder || shown.isEmpty) return;
+    setState(() => _loadingOlder = true);
+    try {
+      final page = await _repository.fetchMessages(
+        widget.chat.id,
+        before: shown.first.createdAt,
+      );
+      if (!mounted) return;
+      setState(() {
+        _older.insertAll(0, page);
+        _mayHaveOlder = page.length >= MessagesRepository.livePageSize;
+      });
+    } catch (error) {
+      _showError('Could not load earlier messages: $error');
+    } finally {
+      if (mounted) setState(() => _loadingOlder = false);
+    }
+  }
+
+  /// The feed plus pages loaded above it and anything sent from here that
+  /// it has not caught up with.
+  List<Message> _withPending(List<Message> fromFeed) {
+    final merged = mergeThread(
+      feed: fromFeed,
+      older: _older,
+      pending: _pending,
+    );
+    if (merged.caughtUp.isNotEmpty) {
+      // Not inside build: the feed has caught up, so forget the overlay on
+      // the next frame rather than mutating state mid-build.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() => merged.caughtUp.forEach(_pending.remove));
+      });
+    }
+    return merged.messages;
   }
 
   void _showError(String message) {
@@ -399,7 +751,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _openTemplates() async {
-    await showTemplatesSheet(
+    final template = await showTemplatesSheet(
       context,
       load: _templates.fetchApproved,
       chatName: widget.chat.displayName,
@@ -410,70 +762,322 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
       create: _templates.createTemplate,
     );
+    if (template == null || !mounted) return;
+
+    final values = await showSendTemplateSheet(
+      context,
+      template: template,
+      chatName: widget.chat.displayName,
+    );
+    if (values == null || !mounted) return;
+
+    try {
+      await _repository.sendTemplateMessage(
+        chatId: widget.chat.id,
+        senderUserId: widget.tenantContext.authUserId,
+        chatOwnerUserId: widget.chat.userId,
+        contactPhone: widget.chat.contactPhone,
+        template: template,
+        values: values,
+      );
+      _notify('Template sent');
+    } on MessageSendException catch (error) {
+      _notify(error.message);
+    }
   }
 
   /// Uploads a finished recording into the existing bucket, then sends it as
   /// an ordinary outbound message carrying an audio attachment marker.
   Future<bool> _sendVoiceNote(VoiceClip clip) async {
+    final String url;
     try {
-      final url = await _attachments.upload(
+      url = await _attachments.upload(
         authUserId: widget.tenantContext.authUserId,
         chatId: widget.chat.id,
         fileName: clip.fileName,
         bytes: clip.bytes,
         contentType: clip.contentType,
       );
-
-      await _repository.sendTextMessage(
-        chatId: widget.chat.id,
-        senderUserId: widget.tenantContext.authUserId,
-        chatOwnerUserId: widget.chat.userId,
-        // The marker is what the row stores so the thread can draw a player;
-        // WhatsApp gets the file through the media keys instead.
+    } on AttachmentUploadException catch (error) {
+      _showError(error.message);
+      return false;
+    }
+    await _dispatchSet(<({String content, OutboundMedia? media})>[
+      (
+        // The marker is what the row stores so the thread can draw a
+        // player; WhatsApp gets the file through the media keys instead.
         content: Message.attachmentMarker(
           type: 'audio',
           name: clip.fileName,
           url: url,
         ),
-        contactPhone: widget.chat.contactPhone,
         media: OutboundMedia(
           url: url,
           type: 'audio',
           mimeType: clip.contentType,
           fileName: clip.fileName,
         ),
+      ),
+    ]);
+    return true;
+  }
+
+  /// Opens the right device picker for the chosen attach option, previews
+  /// what came back, then uploads and sends it.
+  Future<void> _onAttach(AttachOption option) async {
+    try {
+      if (option == AttachOption.contact) {
+        await _shareContact();
+        return;
+      }
+
+      // Photos & Videos takes up to fifteen at once; the rest pick one.
+      final List<PickedAttachment> picked;
+      if (option == AttachOption.photos) {
+        picked = await _picker.pickPhotosOrVideos();
+      } else {
+        final one = await switch (option) {
+          AttachOption.camera => _picker.takePhoto(),
+          AttachOption.audio => _picker.pickAudio(),
+          AttachOption.document => _picker.pickDocument(),
+          // Contact is handled above; the other three never reach here —
+          // the composer routes them before calling this.
+          AttachOption.photos ||
+          AttachOption.contact ||
+          AttachOption.template ||
+          AttachOption.quickReply =>
+            Future<PickedAttachment?>.value(),
+        };
+        picked = <PickedAttachment>[?one];
+      }
+      if (picked.isEmpty || !mounted) return;
+
+      final choice = await showAttachmentsPreviewSheet(
+        context,
+        attachments: picked,
+        chatName: widget.chat.displayName,
+        // The + in the sheet opens the same picker again and the pick joins
+        // the set — so a photo set can be built up a few at a time.
+        onAddMore: (remaining) async => switch (option) {
+          AttachOption.photos =>
+            (await _picker.pickPhotosOrVideos()).take(remaining).toList(),
+          AttachOption.camera => <PickedAttachment>[?await _picker.takePhoto()],
+          AttachOption.audio => <PickedAttachment>[?await _picker.pickAudio()],
+          AttachOption.document =>
+            <PickedAttachment>[?await _picker.pickDocument()],
+          _ => const <PickedAttachment>[],
+        },
       );
-      return true;
-    } on AttachmentUploadException catch (error) {
+      if (choice == null || choice.attachments.isEmpty || !mounted) return;
+
+      await _sendAttachments(choice.attachments, caption: choice.caption);
+    } on AttachmentPickerException catch (error) {
       _showError(error.message);
-      return false;
-    } on MessageSendException catch (error) {
-      // The row exists and is marked failed, so the note is visible in the
-      // thread with its reason.
-      _showError(error.message);
-      return true;
-    } catch (error) {
-      _showError('Could not send the voice note: $error');
-      return false;
     }
   }
 
-  /// Everything on the attach menu except Template Message, which already has
-  /// a real destination.
-  void _onAttach(AttachOption option) {
-    final what = switch (option) {
-      AttachOption.document => 'Documents',
-      AttachOption.photos => 'Photos and videos',
-      AttachOption.audio => 'Audio files',
-      AttachOption.camera => 'The camera',
-      AttachOption.contact => 'Contact cards',
-      AttachOption.template => 'Templates',
-      AttachOption.quickReply => 'Quick replies',
-    };
-    _notify(
-      '$what need a file picker and an upload into the chat-attachments '
-      'bucket - not wired up yet.',
+  /// Uploads every file at once, then sends the set: caption on the first,
+  /// the rest bare, in the order they were picked. The sheet has already
+  /// closed; the bubbles appear together the moment the rows land.
+  Future<void> _sendAttachments(
+    List<PickedAttachment> attachments, {
+    required String caption,
+  }) async {
+    final stamp = DateTime.now().millisecondsSinceEpoch;
+    final List<String?> urls;
+    try {
+      urls = await Future.wait(<Future<String?>>[
+        for (var i = 0; i < attachments.length; i++)
+          _attachments
+              .upload(
+                authUserId: widget.tenantContext.authUserId,
+                chatId: widget.chat.id,
+                // Two files picked with the same name would otherwise
+                // overwrite each other in the bucket.
+                fileName: '${stamp}_${i}_${attachments[i].fileName}',
+                bytes: attachments[i].bytes,
+                contentType: attachments[i].mimeType,
+              )
+              .then<String?>((url) => url, onError: (Object _) => null),
+      ]);
+    } catch (error) {
+      _showError('Could not upload: $error');
+      return;
+    }
+
+    final items = <({String content, OutboundMedia? media})>[];
+    var lost = 0;
+    for (var i = 0; i < attachments.length; i++) {
+      final url = urls[i];
+      if (url == null) {
+        lost++;
+        continue;
+      }
+      final file = attachments[i];
+      final text = i == 0 ? caption : '';
+      items.add((
+        // The marker is what the row stores so the thread can render the
+        // file; WhatsApp gets it through the media keys instead.
+        content: Message.attachmentMarker(
+          type: file.type,
+          name: file.fileName,
+          url: url,
+          caption: text,
+        ),
+        media: OutboundMedia(
+          url: url,
+          type: file.type,
+          mimeType: file.mimeType,
+          fileName: file.fileName,
+          caption: text,
+        ),
+      ));
+    }
+    if (lost > 0) {
+      _showError(
+        lost == attachments.length
+            ? 'The upload failed. Check the connection and try again.'
+            : '$lost of ${attachments.length} could not be uploaded.',
+      );
+    }
+    await _dispatchSet(items);
+  }
+
+  /// Uploads one file and sends it. Kept for the contact card.
+  Future<bool> _sendAttachment(
+    PickedAttachment attachment, {
+    required String caption,
+  }) async {
+    await _sendAttachments(<PickedAttachment>[attachment], caption: caption);
+    return true;
+  }
+
+  /// Shares an address-book contact.
+  ///
+  /// `whatsapp-send` has no contact-card branch, so the vCard is sent as a
+  /// document — the customer receives a `.vcf` they can open and save, which
+  /// is the whole point of sharing one.
+  Future<void> _shareContact() async {
+    final contact = await _picker.pickContact();
+    if (contact == null || !mounted) return;
+
+    final safeName = contact.displayName
+        .replaceAll(RegExp(r'[^A-Za-z0-9 _-]'), '')
+        .trim();
+    final attachment = PickedAttachment(
+      bytes: Uint8List.fromList(utf8.encode(contact.vCard)),
+      fileName: '${safeName.isEmpty ? 'contact' : safeName}.vcf',
+      mimeType: 'text/vcard',
+      type: 'document',
     );
+
+    final caption = await showAttachmentPreviewSheet(
+      context,
+      attachment: attachment,
+      chatName: widget.chat.displayName,
+    );
+    if (caption == null || !mounted) return;
+
+    await _sendAttachment(
+      attachment,
+      // Without a caption the card arrives as a bare file name; the contact's
+      // own name and number read far better in the thread.
+      caption: caption.isEmpty ? contact.preview : caption,
+    );
+  }
+
+  /// Opens a saved quick reply for changes, on the same form that writes a
+  /// new one.
+  Future<QuickReply?> _editQuickReply(QuickReply reply) async {
+    final updated = await showCreateQuickReplySheet(
+      context,
+      existing: reply,
+      save: (title, message, media) => _shortcuts.update(
+        id: reply.id,
+        title: title,
+        message: message,
+        media: media,
+      ),
+      addMedia: _uploadQuickReplyMedia,
+    );
+    if (updated != null) _notify('Saved /${updated.title}.');
+    return updated;
+  }
+
+  /// Sends a quick reply's staged files, then whatever is left in the message
+  /// box as its own final message.
+  ///
+  /// The files were uploaded when the reply was created, so nothing is
+  /// uploaded again — each one is sent straight from its stored URL. They go
+  /// in the reply's own order, and the text follows, which is the order the
+  /// web app sends a shortcut bundle in.
+  Future<bool> _sendShortcutMedia(
+    List<QuickReplyMedia> media,
+    String caption,
+  ) async {
+    // Files first in the reply's own order, then the text as its own final
+    // message — the order the web app sends a shortcut bundle in. Nothing
+    // is uploaded: each file is sent straight from its stored URL.
+    await _dispatchSet(<({String content, OutboundMedia? media})>[
+      for (final item in media)
+        (
+          content: Message.attachmentMarker(
+            type: item.type,
+            name: item.name,
+            url: item.url,
+          ),
+          media: OutboundMedia(
+            url: item.url,
+            type: item.type,
+            mimeType: _mimeForShortcut(item),
+            fileName: item.name,
+          ),
+        ),
+      if (caption.isNotEmpty) (content: caption, media: null),
+    ]);
+    // The staging tray is cleared either way: every file now has a row in
+    // the thread, and a failed one is retried from there, not from the tray.
+    return true;
+  }
+
+  /// Shortcut media carries no stored MIME type, so it is read back off the
+  /// file name the way the picker does.
+  static String _mimeForShortcut(QuickReplyMedia item) =>
+      AttachmentPicker.mimeForFileName(item.name, item.type);
+
+  /// Picks one file for a quick reply and uploads it into the existing
+  /// bucket, returning what was stored.
+  ///
+  /// The caps are the web app's own — smaller than a chat attachment's,
+  /// because a shortcut's media is re-sent on every use.
+  Future<QuickReplyMedia?> _uploadQuickReplyMedia(String kind) async {
+    final picked = await switch (kind) {
+      'image' => _picker.pickImage(),
+      'audio' => _picker.pickAudio(),
+      'video' => _picker.pickVideo(),
+      _ => Future<PickedAttachment?>.value(),
+    };
+    if (picked == null) return null;
+
+    final limit = shortcutLimitFor(kind);
+    if (limit != null && picked.bytes.length > limit) {
+      throw AttachmentPickerException(
+        '"${picked.fileName}" is too large — the limit for $kind is '
+        '${(limit / (1024 * 1024)).round()}MB.',
+      );
+    }
+
+    final url = await _attachments.upload(
+      authUserId: widget.tenantContext.authUserId,
+      // Shortcut media is not tied to one conversation, so it is filed under
+      // `shortcuts` the way the web app files it.
+      chatId: 'shortcuts',
+      fileName: '${DateTime.now().millisecondsSinceEpoch}_${picked.fileName}',
+      bytes: picked.bytes,
+      contentType: picked.mimeType,
+    );
+
+    return QuickReplyMedia(url: url, type: picked.type, name: picked.fileName);
   }
 
   /// The + menu's Quick Replies: a sheet that saves a new `/shortcut` to the
@@ -482,22 +1086,103 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<QuickReply?> _createQuickReply() async {
     final reply = await showCreateQuickReplySheet(
       context,
-      save: (title, message) => _shortcuts.create(
+      save: (title, message, media) => _shortcuts.create(
         userId: widget.tenantContext.authUserId,
         title: title,
         message: message,
+        media: media,
       ),
+      addMedia: _uploadQuickReplyMedia,
     );
     if (reply != null) _notify('Saved /${reply.title}. Type / to use it.');
     return reply;
   }
 
-  void _onSchedule(ScheduledSend scheduled) {
-    final when = DateFormat('d MMM yyyy, h:mm a').format(scheduled.at);
-    _notify(
-      'Picked $when. Writing the scheduled message is not wired up yet - the '
-      'Schedules filter already reads them.',
-    );
+  /// When the customer last wrote in, from the live thread first and the
+  /// chat row as a fallback — the same derivation [_windowOpen] uses.
+  DateTime? _lastInboundAt(List<Message> messages) {
+    DateTime? last;
+    for (final message in messages) {
+      if (message.direction == MessageDirection.inbound &&
+          message.createdAt != null) {
+        final at = message.createdAt!;
+        if (last == null || at.isAfter(last)) last = at;
+      }
+    }
+    return last ?? widget.chat.lastInboundAt;
+  }
+
+  /// Writes the scheduled row(s). Nothing is sent from here: the server's
+  /// `scheduled-message-sender` claims the row at its time. Returns true
+  /// once queued, so the composer clears.
+  Future<bool> _onSchedule(
+    ScheduledSend scheduled,
+    String draft,
+    List<QuickReplyMedia> staged,
+  ) async {
+    final List<String> contents;
+    if (scheduled.isTemplate) {
+      contents = <String>[scheduled.renderedBody];
+    } else if (staged.isNotEmpty) {
+      // One row per staged file, exactly as a normal send stores them, with
+      // the typed text as the caption on the last so it reads under the
+      // set rather than before it.
+      contents = <String>[
+        for (var i = 0; i < staged.length; i++)
+          Message.attachmentMarker(
+            type: staged[i].type,
+            name: staged[i].name,
+            url: staged[i].url,
+            caption: i == staged.length - 1 ? draft : '',
+          ),
+      ];
+    } else {
+      if (draft.isEmpty) {
+        _showError('Type a message to schedule.');
+        return false;
+      }
+      contents = <String>[draft];
+    }
+
+    try {
+      final rows = await _repository.schedule(
+        chatId: widget.chat.id,
+        senderUserId: widget.tenantContext.authUserId,
+        at: scheduled.at,
+        contents: contents,
+        templateName: scheduled.template?.name,
+        templateLanguage: scheduled.template?.language,
+        templateParams: scheduled.isTemplate ? scheduled.orderedParams : null,
+      );
+      if (mounted) {
+        setState(() {
+          for (final row in rows) {
+            _pending[row.id] = row;
+          }
+        });
+      }
+      _notify('Message scheduled');
+      return true;
+    } catch (error) {
+      _showError('Could not schedule the message: $error');
+      return false;
+    }
+  }
+
+  /// Pulls a queued message before the server sends it.
+  Future<void> _cancelScheduled(Message message) async {
+    try {
+      final removed = await _repository.cancelScheduled(message.id);
+      if (!mounted) return;
+      if (removed) {
+        setState(() => _pending.remove(message.id));
+        _notify('Scheduled message canceled');
+      } else {
+        _showError('Too late — that message is already being sent.');
+      }
+    } catch (error) {
+      _showError('Could not cancel: $error');
+    }
   }
 
   void _notify(String message) {
@@ -513,7 +1198,23 @@ class _ChatScreenState extends State<ChatScreen> {
       );
   }
 
-  Future<void> _openAttachment(MessageAttachment attachment) async {
+  /// A picture opens in the app's own full-screen viewer, the way WhatsApp
+  /// shows one — it used to bounce out to a browser tab, which reads as the
+  /// app having lost the photo. Anything else (a PDF, a video, a document)
+  /// still goes to whatever the device opens it with.
+  Future<void> _openAttachment(
+    MessageAttachment attachment, {
+    String caption = '',
+  }) async {
+    if (attachment.isImage) {
+      await showImageViewer(
+        context,
+        attachment: attachment,
+        caption: caption,
+        title: widget.chat.displayName,
+      );
+      return;
+    }
     final uri = Uri.tryParse(attachment.url);
     if (uri == null) return;
     final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
@@ -524,8 +1225,9 @@ class _ChatScreenState extends State<ChatScreen> {
     final query = _query.trim().toLowerCase();
     if (query.isEmpty) return messages;
     return messages
-        .where((message) =>
-            (message.content ?? '').toLowerCase().contains(query))
+        .where(
+          (message) => (message.content ?? '').toLowerCase().contains(query),
+        )
         .toList();
   }
 
@@ -537,7 +1239,7 @@ class _ChatScreenState extends State<ChatScreen> {
       body: StreamBuilder<List<Message>>(
         stream: _messages,
         builder: (context, snapshot) {
-          final messages = snapshot.data ?? const <Message>[];
+          final messages = _withPending(snapshot.data ?? const <Message>[]);
 
           return Column(
             children: <Widget>[
@@ -548,17 +1250,42 @@ class _ChatScreenState extends State<ChatScreen> {
               ),
               MessageComposer(
                 onSend: _send,
+                replyingTo: _replyingTo,
+                replyingToName:
+                    _replyingTo == null ? null : _authorOf(_replyingTo!),
+                replyWarning: _replyingTo == null
+                    ? null
+                    : _replyingTo!.whatsappMessageId == null
+                        ? (_replyingTo!.hasFailed
+                            ? 'This message never reached WhatsApp, so the '
+                                'customer will see your reply without the '
+                                'quote.'
+                            : 'This message is still sending; the customer '
+                                'will see your reply without the quote.')
+                        : null,
+                onCancelReply: () => setState(() => _replyingTo = null),
                 windowOpen: _windowOpen(messages),
                 onTemplates: _openTemplates,
                 onVoiceNote: _sendVoiceNote,
                 onRecorderProblem: _notify,
                 onCreateQuickReply: _createQuickReply,
+                onEditQuickReply: _editQuickReply,
+                onDeleteQuickReply: (reply) => _shortcuts.delete(reply.id),
+                canManageQuickReply: (reply) => reply.canBeManagedBy(
+                  authUserId: widget.tenantContext.authUserId,
+                  isAdmin:
+                      widget.tenantContext.role == AppRole.admin ||
+                      widget.tenantContext.role == AppRole.superAdmin,
+                ),
+                onSendShortcutMedia: _sendShortcutMedia,
                 loadQuickReplies: () => _shortcuts.fetchAll(
-                      tenantAdminId: widget.tenantContext.tenantAdminId,
-                      authUserId: widget.tenantContext.authUserId,
-                    ),
-                onAttach: _onAttach,
+                  tenantAdminId: widget.tenantContext.tenantAdminId,
+                  authUserId: widget.tenantContext.authUserId,
+                ),
+                onAttach: (option) => unawaited(_onAttach(option)),
                 onSchedule: _onSchedule,
+                lastInboundAt: _lastInboundAt(messages),
+                loadTemplates: _templates.fetchApproved,
                 onBlocked: _onWindowBlocked,
                 noticeHidden: _noticeHidden,
                 onDismissNotice: () => setState(() => _noticeHidden = true),
@@ -623,9 +1350,9 @@ class _ChatScreenState extends State<ChatScreen> {
                         ),
                         // The number is always the subtitle; the assignee
                         // moved into the menu, where it has room for a name.
-                        if (widget.chat.contactPhone != null)
+                        if (widget.chat.shownPhone.isNotEmpty)
                           Text(
-                            widget.chat.contactPhone!,
+                            widget.chat.shownPhone,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
@@ -662,24 +1389,19 @@ class _ChatScreenState extends State<ChatScreen> {
           color: Wa.rowHover,
           onSelected: (value) {
             switch (value) {
-              case 'contact_info':
-                _openContactInfo();
               case 'labels':
                 _openLabels();
               case 'categories':
                 _openCategories();
-              case 'assign':
-                _openAssign();
-              case 'templates':
-                _openTemplates();
               case 'convert_lead':
                 _convertToLead();
-              case 'copy_phone':
-                _copyPhone();
             }
           },
+          // Contact info opens by tapping the name in the header, templates
+          // from the composer's + menu and the closed-window notice, and
+          // assignment and the number from inside the contact sheet — so the
+          // menu carries only what has nowhere else to live.
           itemBuilder: (context) => <PopupMenuEntry<String>>[
-            _menuItem('contact_info', Icons.info_outline, 'Contact info'),
             _menuItem(
               'labels',
               Icons.sell_outlined,
@@ -692,35 +1414,33 @@ class _ChatScreenState extends State<ChatScreen> {
               'Categories',
               count: _chatTags.categoryIds.length,
             ),
-            _menuItem(
-              'assign',
-              Icons.person_outline,
-              _assignedName == null ? 'Assign' : 'Assigned: $_assignedName',
-            ),
             const PopupMenuDivider(),
-            _menuItem('templates', Icons.description_outlined, 'Templates'),
             _menuItem('convert_lead', Icons.trending_up, 'Convert to Lead'),
-            _menuItem('copy_phone', Icons.copy_outlined, 'Copy number'),
           ],
         ),
       ],
     );
   }
 
-  void _copyPhone() {
-    final phone = widget.chat.contactPhone;
-    if (phone == null || phone.isEmpty) {
+  Future<void> _copyPhone() async {
+    // What lands on the clipboard is the number as displayed — the ten
+    // digits, not the stored 91-prefixed form.
+    final phone = widget.chat.shownPhone;
+    if (phone.isEmpty) {
       _showError('This chat has no phone number.');
       return;
     }
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text('Copied $phone'),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+
+    try {
+      await Clipboard.setData(ClipboardData(text: phone));
+    } catch (error) {
+      // A browser can refuse the clipboard outright — saying so beats a
+      // "Copied" that did not happen.
+      _showError('Could not copy the number: $error');
+      return;
+    }
+    // Only claimed once the write actually went through.
+    _notify('Copied $phone');
   }
 
   Widget _history(
@@ -738,15 +1458,34 @@ class _ChatScreenState extends State<ChatScreen> {
       return _EmptyConversation(searching: _query.trim().isNotEmpty);
     }
 
-    final byId = <String, Message>{for (final message in all) message.id: message};
+    final byId = <String, Message>{
+      ..._quotedExtra,
+      for (final message in all) message.id: message,
+    };
+    _resolveMissingQuotes(visible, byId);
     final items = buildThreadItems(visible);
+
+    // A "load earlier" row sits above the oldest message once a full first
+    // page has come in, so the thread can be walked back; it disappears when
+    // a page comes back short. Searching hides it — the search only covers
+    // what is loaded and a partial answer would mislead.
+    final showLoader = _query.trim().isEmpty &&
+        _mayHaveOlder &&
+        all.length >= MessagesRepository.livePageSize;
+    final rowCount = items.length + (showLoader ? 1 : 0);
 
     return ListView.builder(
       reverse: true,
       padding: const EdgeInsets.symmetric(vertical: 8),
-      itemCount: items.length,
+      itemCount: rowCount,
       itemBuilder: (context, index) {
-        // reverse:true renders index 0 at the bottom.
+        // reverse:true renders index 0 at the bottom; the loader is last.
+        if (showLoader && index == rowCount - 1) {
+          return _LoadEarlier(
+            loading: _loadingOlder,
+            onPressed: () => _loadOlder(all),
+          );
+        }
         final item = items[items.length - 1 - index];
         if (item is DateTime) return DayDivider(day: item);
 
@@ -762,14 +1501,18 @@ class _ChatScreenState extends State<ChatScreen> {
           repliedToName: quotedId == null
               ? null
               : (byId[quotedId]?.isOutbound ?? false)
-                  ? 'You'
-                  : widget.chat.displayName,
-          onOpenAttachment: _openAttachment,
+              ? 'You'
+              : widget.chat.displayName,
+          onOpenAttachment: (attachment) =>
+              _openAttachment(attachment, caption: message.body),
+          onLongPress: () => _openMessageActions(message),
+          onCancelScheduled: message.isScheduled
+              ? () => _cancelScheduled(message)
+              : null,
         );
       },
     );
   }
-
 }
 
 class _EmptyConversation extends StatelessWidget {
@@ -826,3 +1569,36 @@ class _MessagesError extends StatelessWidget {
   }
 }
 
+/// The row above the oldest loaded message that pages the thread back.
+class _LoadEarlier extends StatelessWidget {
+  const _LoadEarlier({required this.loading, required this.onPressed});
+
+  final bool loading;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        child: loading
+            ? const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Wa.accent,
+                ),
+              )
+            : TextButton.icon(
+                onPressed: onPressed,
+                icon: const Icon(Icons.history, size: 18, color: Wa.accent),
+                label: const Text(
+                  'Load earlier messages',
+                  style: TextStyle(color: Wa.accent, fontSize: 13),
+                ),
+              ),
+      ),
+    );
+  }
+}

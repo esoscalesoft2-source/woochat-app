@@ -20,7 +20,7 @@ void main() {
             onVoiceNote: (_) async => true,
             onRecorderProblem: (_) {},
             onAttach: (_) {},
-            onSchedule: (_) {},
+            onSchedule: (_, _, _) async => true,
             onBlocked: () {},
           ),
         ),

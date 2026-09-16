@@ -16,6 +16,12 @@ class TagOption {
 /// It slides up like every other surface in the app. Toggling writes straight
 /// away through [onToggle] rather than collecting changes behind a Save, which
 /// is what the web app does — the tick reflects the row that now exists.
+///
+/// [singleSelect] makes it a chooser rather than a set of toggles: ticking one
+/// option clears whichever was ticked before, and ticking the ticked one
+/// clears it — the way the Products menu works, since a customer holds one
+/// product. [onToggle] is still called once per tap, with the row that was
+/// tapped.
 Future<void> showChatTagsSheet(
   BuildContext context, {
   required String title,
@@ -23,6 +29,8 @@ Future<void> showChatTagsSheet(
   required List<TagOption> options,
   required Set<String> selected,
   required Future<bool> Function(String id, bool applied) onToggle,
+  bool singleSelect = false,
+  IconData? leadingIcon,
 }) {
   return showModalBottomSheet<void>(
     context: context,
@@ -38,6 +46,8 @@ Future<void> showChatTagsSheet(
       options: options,
       selected: selected,
       onToggle: onToggle,
+      singleSelect: singleSelect,
+      leadingIcon: leadingIcon,
     ),
   );
 }
@@ -49,6 +59,8 @@ class _ChatTagsSheet extends StatefulWidget {
     required this.options,
     required this.selected,
     required this.onToggle,
+    required this.singleSelect,
+    required this.leadingIcon,
   });
 
   final String title;
@@ -56,6 +68,10 @@ class _ChatTagsSheet extends StatefulWidget {
   final List<TagOption> options;
   final Set<String> selected;
   final Future<bool> Function(String id, bool applied) onToggle;
+  final bool singleSelect;
+
+  /// Drawn instead of the colour dot when the options have no colour.
+  final IconData? leadingIcon;
 
   @override
   State<_ChatTagsSheet> createState() => _ChatTagsSheetState();
@@ -82,6 +98,7 @@ class _ChatTagsSheetState extends State<_ChatTagsSheet> {
       // Only move the tick once the row is actually there (or gone).
       if (ok) {
         if (applied) {
+          if (widget.singleSelect) _selected.clear();
           _selected.add(option.id);
         } else {
           _selected.remove(option.id);
@@ -134,7 +151,9 @@ class _ChatTagsSheetState extends State<_ChatTagsSheet> {
 
                     return ListTile(
                       onTap: () => _toggle(option),
-                      leading: _Dot(color: _parseColor(option.color)),
+                      leading: widget.leadingIcon != null && option.color == null
+                          ? Icon(widget.leadingIcon, size: 20, color: Wa.productChip)
+                          : _Dot(color: _parseColor(option.color)),
                       title: Text(
                         option.name,
                         maxLines: 1,

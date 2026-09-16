@@ -116,14 +116,26 @@ class QuickRepliesPanel extends StatelessWidget {
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        reply.message.replaceAll('\n', ' '),
+                        reply.preview.replaceAll('\n', ' '),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Thread.text,
+                        style: TextStyle(
+                          color: reply.message.isEmpty
+                              ? Thread.meta
+                              : Thread.text,
                           fontSize: 13,
                         ),
                       ),
+                      // A reply with both text and files says so, the way the
+                      // web list does.
+                      if (reply.message.isNotEmpty && reply.hasMedia)
+                        Text(
+                          reply.mediaLabel,
+                          style: const TextStyle(
+                            color: Thread.meta,
+                            fontSize: 11.5,
+                          ),
+                        ),
                     ],
                   ),
                 ),

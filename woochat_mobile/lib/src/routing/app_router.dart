@@ -63,7 +63,8 @@ GoRouter createRouter(SessionController session) {
       ),
       GoRoute(
         path: Routes.login,
-        builder: (context, state) => const LoginScreen(),
+        builder: (context, state) =>
+            LoginScreen(notice: session.takeSignOutNotice()),
       ),
       GoRoute(
         path: Routes.signup,

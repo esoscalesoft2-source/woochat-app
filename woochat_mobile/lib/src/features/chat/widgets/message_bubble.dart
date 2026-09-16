@@ -1,4 +1,7 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 
 import '../../../core/constants.dart';
 import '../../../core/formatting.dart';
@@ -11,6 +14,15 @@ import 'voice_note_bubble.dart';
 export '../../../theme/wa_colors.dart' show Thread;
 
 /// A single message bubble.
+/// WhatsApp's bubble widths. A picture never grows past the first; text
+/// gets a little more room. Both also stay under 75% of the screen, so a
+/// phone is unaffected — these only bite on a tablet or a browser window.
+const double kImageBubbleMaxWidth = 330;
+const double kTextBubbleMaxWidth = 520;
+
+/// A picture taller than this is cropped rather than scrolled past.
+const double kImageBubbleMaxHeight = 420;
+
 class MessageBubble extends StatelessWidget {
   const MessageBubble({
     super.key,
@@ -18,9 +30,18 @@ class MessageBubble extends StatelessWidget {
     this.repliedTo,
     this.repliedToName,
     this.onOpenAttachment,
+    this.onLongPress,
+    this.onCancelScheduled,
     this.showTail = true,
     this.avatar,
   });
+
+  /// Pulls a queued message before the server sends it. Only offered on a
+  /// row whose status is still `scheduled`.
+  final VoidCallback? onCancelScheduled;
+
+  /// Holding the bubble — the message actions (forward, copy) hang off it.
+  final VoidCallback? onLongPress;
 
   /// The contact's picture, shown on a voice note the way WhatsApp does.
   final Widget? avatar;
@@ -55,138 +76,162 @@ class MessageBubble extends StatelessWidget {
 
     return Align(
       alignment: isOutbound ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        // WhatsApp's own metrics: 8px from the screen edge, a hair's gap
-        // inside a run and a wider one before a new run, never past 75%.
-        margin: EdgeInsets.only(
-          left: 8,
-          right: 8,
-          top: showTail ? 6 : 1.5,
-          bottom: 1.5,
-        ),
-        constraints: BoxConstraints(
-          maxWidth: MediaQuery.sizeOf(context).width * 0.75,
-        ),
-        child: CustomPaint(
-          // The bubble is painted rather than decorated so the tail is part
-          // of its shape instead of something stuck on beside it.
-          painter: _BubblePainter(
-            color: isOutbound ? Thread.outbound : Thread.inbound,
-            outbound: isOutbound,
-            tail: showTail,
+      child: GestureDetector(
+        onLongPress: onLongPress,
+        child: Container(
+          // WhatsApp's own metrics: 8px from the screen edge, a hair's gap
+          // inside a run and a wider one before a new run, never past 75%.
+          margin: EdgeInsets.only(
+            left: 8,
+            right: 8,
+            top: showTail ? 6 : 1.5,
+            bottom: 1.5,
           ),
-          child: Padding(
-            // A bare picture gets no frame at all — only the strip the tail
-            // needs, so the image never paints over it.
-            padding: bareImage
-                ? EdgeInsets.only(
-                    left: isOutbound ? 0 : _BubblePainter.tailWidth,
-                    right: isOutbound ? _BubblePainter.tailWidth : 0,
-                  )
-                : attachment == null
-                ? EdgeInsets.fromLTRB(
-                    isOutbound ? 9 : 9 + _BubblePainter.tailWidth,
-                    6,
-                    isOutbound ? 9 + _BubblePainter.tailWidth : 9,
-                    7,
-                  )
-                : EdgeInsets.fromLTRB(
-                    isOutbound ? 3 : 3 + _BubblePainter.tailWidth,
-                    3,
-                    isOutbound ? 3 + _BubblePainter.tailWidth : 3,
-                    3,
-                  ),
-            child: bareImage
-                ? ClipRRect(
-                    // Matches the painted body exactly, so the picture takes
-                    // the bubble's own shape.
-                    borderRadius: _BubblePainter.corners(
-                      outbound: isOutbound,
-                      tail: showTail,
+          // Never past 75% of the screen, and never past an absolute width
+          // either: on a desktop browser 75% is 1400px, which turned a
+          // screenshot into a banner and a sentence into a line across the
+          // room. WhatsApp caps a picture at ~330px and text a little wider.
+          constraints: BoxConstraints(
+            maxWidth: math.min(
+              MediaQuery.sizeOf(context).width * 0.75,
+              attachment != null && (attachment.isImage || attachment.isVideo)
+                  ? kImageBubbleMaxWidth
+                  : kTextBubbleMaxWidth,
+            ),
+          ),
+          child: CustomPaint(
+            // The bubble is painted rather than decorated so the tail is part
+            // of its shape instead of something stuck on beside it.
+            painter: _BubblePainter(
+              color: isOutbound ? Thread.outbound : Thread.inbound,
+              outbound: isOutbound,
+              tail: showTail,
+            ),
+            child: Padding(
+              // A bare picture gets no frame at all — only the strip the tail
+              // needs, so the image never paints over it.
+              padding: bareImage
+                  ? EdgeInsets.only(
+                      left: isOutbound ? 0 : _BubblePainter.tailWidth,
+                      right: isOutbound ? _BubblePainter.tailWidth : 0,
+                    )
+                  : attachment == null
+                  ? EdgeInsets.fromLTRB(
+                      isOutbound ? 9 : 9 + _BubblePainter.tailWidth,
+                      6,
+                      isOutbound ? 9 + _BubblePainter.tailWidth : 9,
+                      7,
+                    )
+                  : EdgeInsets.fromLTRB(
+                      isOutbound ? 3 : 3 + _BubblePainter.tailWidth,
+                      3,
+                      isOutbound ? 3 + _BubblePainter.tailWidth : 3,
+                      3,
                     ),
-                    child: Stack(
+              child: bareImage
+                  ? ClipRRect(
+                      // Matches the painted body exactly, so the picture takes
+                      // the bubble's own shape.
+                      borderRadius: _BubblePainter.corners(
+                        outbound: isOutbound,
+                        tail: showTail,
+                      ),
+                      child: Stack(
+                        children: <Widget>[
+                          _AttachmentView(
+                            attachment: attachment,
+                            onOpen: onOpenAttachment,
+                            outbound: isOutbound,
+                            avatar: avatar,
+                            rounded: false,
+                          ),
+                          Positioned(
+                            right: 6,
+                            bottom: 5,
+                            child: _StampChip(
+                              stamp: TimeFormat.bubbleStamp(message.createdAt),
+                              status: isOutbound ? message.status : null,
+                            ),
+                          ),
+                        ],
+                      ),
+                    )
+                  : Column(
+                      // With no text, the stamp is the only thing under the
+                      // media and it should hug the right edge of THAT — an
+                      // Align would grow to the bubble's maximum width and
+                      // drag a voice note out to 75% of the screen.
+                      crossAxisAlignment: body.isEmpty && attachment != null
+                          ? CrossAxisAlignment.end
+                          : CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
                       children: <Widget>[
-                        _AttachmentView(
-                          attachment: attachment,
-                          onOpen: onOpenAttachment,
-                          outbound: isOutbound,
-                          avatar: avatar,
-                          rounded: false,
-                        ),
-                        Positioned(
-                          right: 6,
-                          bottom: 5,
-                          child: _StampChip(
-                            stamp: TimeFormat.bubbleStamp(message.createdAt),
-                            status: isOutbound ? message.status : null,
+                        if (repliedTo != null)
+                          _QuotedMessage(
+                            message: repliedTo!,
+                            name: repliedToName ?? 'Message',
+                          ),
+                        // `messages.template_name` is deliberately not drawn: WhatsApp
+                        // shows a template message as an ordinary bubble, and the label
+                        // read as part of the message text.
+                        if (attachment != null)
+                          _AttachmentView(
+                            attachment: attachment,
+                            onOpen: onOpenAttachment,
+                            outbound: isOutbound,
+                            avatar: avatar,
+                          ),
+                        Padding(
+                          padding: attachment == null
+                              ? EdgeInsets.zero
+                              : const EdgeInsets.fromLTRB(6, 6, 4, 2),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: <Widget>[
+                              if (message.reaction != null) ...<Widget>[
+                                const SizedBox(height: 4),
+                                Text(
+                                  message.reaction!,
+                                  style: const TextStyle(fontSize: 16),
+                                ),
+                              ],
+                              _BodyWithStamp(
+                                body: body,
+                                // A queued row is stamped with WHEN IT WILL
+                                // GO, not when it was written; the clock in
+                                // place of ticks says the same.
+                                stamp: message.isScheduled
+                                    ? scheduledStamp(message.scheduledAt)
+                                    : TimeFormat.bubbleStamp(
+                                        message.createdAt,
+                                      ),
+                                status: isOutbound ? message.status : null,
+                                outbound: isOutbound,
+                              ),
+                              if (message.hasFailed &&
+                                  message.sendErrorMessage != null)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 4),
+                                  child: Text(
+                                    message.sendErrorMessage!,
+                                    style: const TextStyle(
+                                      color: Wa.error,
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                                ),
+                              if (isOutbound && message.isScheduled)
+                                _ScheduledFooter(
+                                  message: message,
+                                  onCancel: onCancelScheduled,
+                                ),
+                            ],
                           ),
                         ),
                       ],
                     ),
-                  )
-                : Column(
-                    // With no text, the stamp is the only thing under the
-                    // media and it should hug the right edge of THAT — an
-                    // Align would grow to the bubble's maximum width and
-                    // drag a voice note out to 75% of the screen.
-                    crossAxisAlignment: body.isEmpty && attachment != null
-                        ? CrossAxisAlignment.end
-                        : CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: <Widget>[
-                      if (repliedTo != null)
-                        _QuotedMessage(
-                          message: repliedTo!,
-                          name: repliedToName ?? 'Message',
-                        ),
-                      // `messages.template_name` is deliberately not drawn: WhatsApp
-                      // shows a template message as an ordinary bubble, and the label
-                      // read as part of the message text.
-                      if (attachment != null)
-                        _AttachmentView(
-                          attachment: attachment,
-                          onOpen: onOpenAttachment,
-                          outbound: isOutbound,
-                          avatar: avatar,
-                        ),
-                      Padding(
-                        padding: attachment == null
-                            ? EdgeInsets.zero
-                            : const EdgeInsets.fromLTRB(6, 6, 4, 2),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisSize: MainAxisSize.min,
-                          children: <Widget>[
-                            if (message.reaction != null) ...<Widget>[
-                              const SizedBox(height: 4),
-                              Text(
-                                message.reaction!,
-                                style: const TextStyle(fontSize: 16),
-                              ),
-                            ],
-                            _BodyWithStamp(
-                              body: body,
-                              stamp: TimeFormat.bubbleStamp(message.createdAt),
-                              status: isOutbound ? message.status : null,
-                              outbound: isOutbound,
-                            ),
-                            if (message.hasFailed &&
-                                message.sendErrorMessage != null)
-                              Padding(
-                                padding: const EdgeInsets.only(top: 4),
-                                child: Text(
-                                  message.sendErrorMessage!,
-                                  style: const TextStyle(
-                                    color: Wa.error,
-                                    fontSize: 11,
-                                  ),
-                                ),
-                              ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
+            ),
           ),
         ),
       ),
@@ -395,28 +440,37 @@ class _AttachmentView extends StatelessWidget {
       );
     }
     if (attachment.isImage) {
+      // The picture keeps its own shape: full bubble width, height from its
+      // aspect ratio, cropped only once it would be taller than a phone
+      // screen's worth. Fixing the height to 200 is what sliced tall
+      // screenshots into strips.
       return GestureDetector(
         onTap: onOpen == null ? null : () => onOpen!(attachment),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(rounded ? 8 : 0),
-          child: Image.network(
-            attachment.url,
-            fit: BoxFit.cover,
-            height: 200,
-            width: double.infinity,
-            loadingBuilder: (context, child, progress) => progress == null
-                ? child
-                : const SizedBox(
-                    height: 200,
-                    child: Center(
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Wa.accent,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(
+              minHeight: 120,
+              maxHeight: kImageBubbleMaxHeight,
+            ),
+            child: Image.network(
+              attachment.url,
+              fit: BoxFit.cover,
+              width: double.infinity,
+              loadingBuilder: (context, child, progress) => progress == null
+                  ? child
+                  : const SizedBox(
+                      height: 200,
+                      child: Center(
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Wa.accent,
+                        ),
                       ),
                     ),
-                  ),
-            errorBuilder: (_, _, _) =>
-                _FileTile(attachment: attachment, onOpen: onOpen),
+              errorBuilder: (_, _, _) =>
+                  _FileTile(attachment: attachment, onOpen: onOpen),
+            ),
           ),
         ),
       );
@@ -573,9 +627,89 @@ class _DeliveryIcon extends StatelessWidget {
       MessageStatus.delivered => (Icons.done_all, Thread.meta),
       MessageStatus.sent => (Icons.done, Thread.meta),
       MessageStatus.failed => (Icons.error_outline, Wa.error),
+      MessageStatus.scheduled => (Icons.schedule, Wa.warning),
       _ => (Icons.schedule, Thread.meta),
     };
     return Icon(icon, size: 14, color: color);
+  }
+}
+
+/// `scheduled_at` as the bubble shows it: "16 Sep, 9:30 AM" — the day is
+/// always spelt, since a queued message usually goes on a later one.
+String scheduledStamp(DateTime? at) =>
+    at == null ? '' : DateFormat('d MMM, h:mm a').format(at.toLocal());
+
+/// What sits under a queued bubble: why it is waiting, if it is being held,
+/// and the way to pull it back.
+class _ScheduledFooter extends StatelessWidget {
+  const _ScheduledFooter({required this.message, required this.onCancel});
+
+  final Message message;
+  final VoidCallback? onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    final held = message.isHeldByMarketingCap;
+    final retry = message.retryNote;
+    final String? note = held
+        ? "Held back by WhatsApp (customer's marketing limit) · retries "
+            'automatically at ${scheduledStamp(message.scheduledAt)}'
+        : retry;
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          if (note != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  const Icon(
+                    Icons.warning_amber_rounded,
+                    size: 12,
+                    color: Wa.warning,
+                  ),
+                  const SizedBox(width: 4),
+                  Flexible(
+                    child: Text(
+                      note,
+                      key: const ValueKey<String>('scheduled-note'),
+                      style: const TextStyle(color: Wa.warning, fontSize: 11),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          if (onCancel != null)
+            InkWell(
+              key: const ValueKey<String>('cancel-scheduled'),
+              onTap: onCancel,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    const Icon(Icons.close, size: 12, color: Thread.meta),
+                    const SizedBox(width: 4),
+                    Text(
+                      held ? 'Cancel auto resend' : 'Cancel scheduled',
+                      style: const TextStyle(
+                        color: Thread.meta,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
   }
 }
 

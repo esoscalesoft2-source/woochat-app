@@ -24,7 +24,7 @@ void main() {
               windowOpen: true,
               onTemplates: () {},
               onAttach: (_) {},
-              onSchedule: (_) {},
+              onSchedule: (_, _, _) async => true,
               onBlocked: () {},
               onVoiceNote: (_) async => true,
               onRecorderProblem: (_) {},

@@ -49,3 +49,31 @@ bool startsRun(List<Object> items, int index) {
   if (previous is! Message) return true;
   return previous.isOutbound != item.isOutbound;
 }
+
+/// What the thread shows: pages loaded above the live feed, the feed itself,
+/// and anything sent from this screen the feed has not echoed back yet.
+///
+/// Rows the feed already holds are dropped from the other two, so nothing is
+/// drawn twice as the feed catches up. Returns the messages oldest first and
+/// the ids of pending rows the feed now carries, so the caller can forget
+/// them.
+({List<Message> messages, List<String> caughtUp}) mergeThread({
+  required List<Message> feed,
+  List<Message> older = const <Message>[],
+  Map<String, Message> pending = const <String, Message>{},
+}) {
+  final live = <String>{for (final message in feed) message.id};
+  return (
+    messages: <Message>[
+      for (final message in older)
+        if (!live.contains(message.id)) message,
+      ...feed,
+      for (final entry in pending.entries)
+        if (!live.contains(entry.key)) entry.value,
+    ],
+    caughtUp: <String>[
+      for (final id in pending.keys)
+        if (live.contains(id)) id,
+    ],
+  );
+}
