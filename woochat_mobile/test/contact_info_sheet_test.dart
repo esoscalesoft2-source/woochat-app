@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:woochat_mobile/src/features/chat/widgets/contact_info_sheet.dart';
 import 'package:woochat_mobile/src/models/chat.dart';
+import 'package:woochat_mobile/src/data/lead_activity_repository.dart';
 import 'package:woochat_mobile/src/data/summaries_repository.dart';
 import 'package:woochat_mobile/src/models/chat_filters.dart';
 
@@ -243,6 +244,138 @@ void main() {
       expect(find.text('Contact info'), findsOneWidget);
       expect(find.byType(BottomSheet), findsNothing);
       expect(find.byType(BackButton), findsOneWidget);
+    });
+  });
+
+  group('Lead activity section', () {
+    final history = <LeadStageEvent>[
+      LeadStageEvent(
+        id: 'e1',
+        from: 'Callback',
+        to: 'Lead',
+        at: DateTime(2026, 9, 16, 0, 0),
+        by: null,
+        isBaseline: false,
+      ),
+      LeadStageEvent(
+        id: 'e2',
+        from: 'Lead',
+        to: 'Callback',
+        at: DateTime(2026, 9, 15, 17, 47),
+        by: 'Zakira ESO Sales',
+        isBaseline: false,
+      ),
+      LeadStageEvent(
+        id: 'e3',
+        from: null,
+        to: 'Callback',
+        at: DateTime(2026, 8, 14, 9, 5),
+        by: null,
+        isBaseline: true,
+      ),
+    ];
+
+    Future<void> open(
+      WidgetTester tester, {
+      required Future<List<LeadStageEvent>> Function() load,
+    }) async {
+      tester.view.physicalSize = const Size(390, 1600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => TextButton(
+                onPressed: () => showContactInfoSheet(
+                  context,
+                  chat: chat,
+                  assignedName: null,
+                  labels: const <String>[],
+                  categories: const <String>[],
+                  onCopyNumber: () {},
+                  loadSummaries: () async => const <ChatSummary>[],
+                  loadLeadActivity: load,
+                ),
+                child: const Text('open'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('lists every move under Summary, newest first, with a count',
+        (tester) async {
+      await open(tester, load: () async => history);
+
+      expect(find.text('Lead activity (3)'), findsOneWidget);
+      // Below the summary section, the way the web card stacks them.
+      expect(
+        tester.getTopLeft(find.text('Lead activity (3)')).dy,
+        greaterThan(tester.getTopLeft(find.text('Summary')).dy),
+      );
+
+      // A move reads from → to; the cron's move says so.
+      expect(find.textContaining('Callback  →  Lead'), findsOneWidget);
+      expect(
+        find.textContaining('16 Sep 2026, 12:00 AM · automatic'),
+        findsOneWidget,
+      );
+      // A person's move is attributed by name.
+      expect(
+        find.textContaining('15 Sep 2026, 5:47 PM · Zakira ESO Sales'),
+        findsOneWidget,
+      );
+      // The seeded starting point has no arrow, and says it is approximate.
+      expect(find.textContaining('as at 14 Aug 2026, 9:05 AM'), findsOneWidget);
+      expect(
+        find.textContaining('Where this lead stood when logging began'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('a lead with no recorded moves says so', (tester) async {
+      await open(tester, load: () async => const <LeadStageEvent>[]);
+
+      expect(find.text('Lead activity'), findsOneWidget);
+      expect(
+        find.textContaining('No pipeline changes recorded yet'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('a failed read shows the reason, not a spinner forever',
+        (tester) async {
+      await open(
+        tester,
+        load: () async =>
+            throw const LeadActivityException('Could not load the lead activity: x'),
+      );
+
+      expect(find.textContaining('Could not load the lead activity'),
+          findsOneWidget);
+    });
+  });
+
+  group('LeadActivityRepository.stageLabel', () {
+    const labels = <String, String>{
+      'lead': 'Lead',
+      'discussion': 'Callback',
+    };
+
+    test('reads the board label for a stored stage value', () {
+      expect(LeadActivityRepository.stageLabel('discussion', labels), 'Callback');
+    });
+
+    test("'new' is its own status, never relabelled as the first column", () {
+      expect(LeadActivityRepository.stageLabel('new', labels), 'New');
+    });
+
+    test('a stage since deleted falls back to its raw value', () {
+      expect(LeadActivityRepository.stageLabel('gone', labels), 'gone');
     });
   });
 }

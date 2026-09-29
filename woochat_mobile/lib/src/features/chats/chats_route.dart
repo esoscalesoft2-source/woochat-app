@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../state/session_scope.dart';
+import '../call/incoming_call_watcher.dart';
 import '../shell/home_shell.dart';
 
 /// `/chats` — waits for the tenant to resolve, then shows the app shell.
@@ -27,9 +28,15 @@ class ChatsRoute extends StatelessWidget {
       );
     }
 
-    return HomeShell(
+    // The watcher sits here, under every signed-in screen: a customer's
+    // call rings on top of whatever is open, an individual chat included,
+    // since those routes stack on this one's navigator.
+    return IncomingCallWatcher(
       tenantContext: tenantContext,
-      onSignOut: session.signOut,
+      child: HomeShell(
+        tenantContext: tenantContext,
+        onSignOut: session.signOut,
+      ),
     );
   }
 }

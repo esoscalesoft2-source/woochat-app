@@ -386,9 +386,11 @@ class _MessageComposerState extends State<MessageComposer> {
     );
     if (scheduled == null || !mounted) return;
 
+    // The sheet's box is what gets queued: it opens holding the chat box's
+    // text, and they may have edited it there or typed it there outright.
     final queued = await widget.onSchedule(
       scheduled,
-      _controller.text.trim(),
+      scheduled.body,
       _pendingMedia,
     );
     if (queued && mounted) {
@@ -924,50 +926,62 @@ class _WindowNotice extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    // The whole strip opens Templates, not just the word at its end: the
+    // card is what people tap when it tells them what to do next. The ×
+    // stays its own button on top, so hiding it does not open the sheet.
+    return Material(
       color: Thread.warningBackground,
-      padding: const EdgeInsets.fromLTRB(0, 6, 4, 6),
-      child: Row(
-        children: <Widget>[
-          Container(width: 3, height: 22, color: Thread.warning),
-          const SizedBox(width: 8),
-          const Icon(Icons.warning_amber_rounded,
-              size: 16, color: Thread.warning),
-          const SizedBox(width: 6),
-          // The whole explanation lives here, in the card, rather than a
-          // headline here and the sentence in a toast underneath.
-          const Expanded(
-            child: Text(
-              kWindowClosedMessage,
-              maxLines: 3,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: Thread.text, fontSize: 12.5),
-            ),
+      child: InkWell(
+        key: const ValueKey<String>('window-notice'),
+        onTap: onTemplates,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(0, 6, 4, 6),
+          child: Row(
+            children: <Widget>[
+              Container(width: 3, height: 22, color: Thread.warning),
+              const SizedBox(width: 8),
+              const Icon(Icons.warning_amber_rounded,
+                  size: 16, color: Thread.warning),
+              const SizedBox(width: 6),
+              // The whole explanation lives here, in the card, rather than
+              // a headline here and the sentence in a toast underneath.
+              const Expanded(
+                child: Text(
+                  kWindowClosedMessage,
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: Thread.text, fontSize: 12.5),
+                ),
+              ),
+              TextButton(
+                onPressed: onTemplates,
+                style: TextButton.styleFrom(
+                  foregroundColor: Thread.warning,
+                  minimumSize: Size.zero,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                child: const Text(
+                  'Templates',
+                  style:
+                      TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
+                ),
+              ),
+              if (onDismiss != null)
+                IconButton(
+                  onPressed: onDismiss,
+                  icon: const Icon(Icons.close, size: 14),
+                  color: Thread.meta,
+                  tooltip: 'Hide',
+                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                  constraints:
+                      const BoxConstraints(minWidth: 26, minHeight: 26),
+                ),
+            ],
           ),
-          TextButton(
-            onPressed: onTemplates,
-            style: TextButton.styleFrom(
-              foregroundColor: Thread.warning,
-              minimumSize: Size.zero,
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            ),
-            child: const Text(
-              'Templates',
-              style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
-            ),
-          ),
-          if (onDismiss != null)
-            IconButton(
-              onPressed: onDismiss,
-              icon: const Icon(Icons.close, size: 14),
-              color: Thread.meta,
-              tooltip: 'Hide',
-              visualDensity: VisualDensity.compact,
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
-            ),
-        ],
+        ),
       ),
     );
   }

@@ -246,11 +246,10 @@ class _MarketingPanel extends StatelessWidget {
         children: <Widget>[
           Row(
             children: <Widget>[
-              // The ring cut out of its dark square — the tinted box that
-              // stood in for it is gone, and so is the black tile a square
-              // icon would have put on the card.
+              // The app tile itself: its corners are transparent, so it
+              // sits on the card without a box around it.
               Image.asset(
-                'assets/branding/app_icon_round.png',
+                'assets/branding/app_icon_mark.png',
                 width: 48,
                 height: 48,
                 fit: BoxFit.contain,

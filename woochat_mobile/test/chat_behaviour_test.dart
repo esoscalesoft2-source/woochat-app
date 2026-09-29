@@ -324,6 +324,7 @@ void main() {
       bool noticeHidden = false,
       DateTime? lastInboundAt,
       VoidCallback? onTemplates,
+      VoidCallback? onDismissNotice,
       ValueChanged<AttachOption>? onAttach,
       VoidCallback? onBlocked,
       bool stubEmojiPicker = false,
@@ -344,6 +345,7 @@ void main() {
               lastInboundAt: lastInboundAt ??
                   DateTime.now().subtract(const Duration(hours: 1)),
               onTemplates: onTemplates ?? () {},
+              onDismissNotice: onDismissNotice,
               onAttach: onAttach ?? (_) {},
               onVoiceNote: onVoiceNote ?? (_) async => true,
               onRecorderProblem: onRecorderProblem ?? (_) {},
@@ -712,9 +714,21 @@ void main() {
         find.widgetWithText(FilledButton, 'Schedule'),
       );
       expect(button.onPressed, isNull);
+
+      // The sheet has its own box, so the message can be written here
+      // rather than in the chat box, and that is what arms the button.
+      await tester.enterText(
+        find.byKey(const ValueKey<String>('schedule-message')),
+        'Later, then',
+      );
+      await tester.pump();
       expect(
-        find.textContaining('Type a message in the chat box'),
-        findsOneWidget,
+        tester
+            .widget<FilledButton>(
+              find.widgetWithText(FilledButton, 'Schedule'),
+            )
+            .onPressed,
+        isNotNull,
       );
     });
 
@@ -868,6 +882,28 @@ void main() {
 
       expect(find.text(kWindowClosedMessage), findsOneWidget);
       expect(find.text('Templates'), findsOneWidget);
+    });
+
+    testWidgets('tapping the notice itself opens Templates; × only hides it',
+        (tester) async {
+      var taps = 0;
+      var hidden = 0;
+      await pump(
+        tester,
+        windowOpen: false,
+        onTemplates: () => taps++,
+        onDismissNotice: () => hidden++,
+      );
+
+      // The sentence, not the word "Templates" at the end of it.
+      await tester.tap(find.text(kWindowClosedMessage));
+      await tester.pump();
+      expect(taps, 1);
+
+      await tester.tap(find.byTooltip('Hide'));
+      await tester.pump();
+      expect(hidden, 1);
+      expect(taps, 1, reason: 'hiding the strip must not open the sheet');
     });
 
     testWidgets('the mic is refused while the window is closed',

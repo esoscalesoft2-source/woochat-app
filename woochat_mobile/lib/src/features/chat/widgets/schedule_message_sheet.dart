@@ -8,7 +8,7 @@ import '../schedule_rules.dart';
 /// What the dialog decided: when, and either the composer's own message or
 /// a filled-in template.
 class ScheduledSend {
-  const ScheduledSend.freeForm({required this.at})
+  const ScheduledSend.freeForm({required this.at, required this.body})
       : template = null,
         params = const <int, String>{};
 
@@ -16,9 +16,14 @@ class ScheduledSend {
     required this.at,
     required MessageTemplate this.template,
     required this.params,
-  });
+  }) : body = '';
 
   final DateTime at;
+
+  /// The message to queue, as it stands in the sheet's own box — the
+  /// composer's text when it was opened with one, otherwise whatever was
+  /// typed here. Empty for a template send, which carries [renderedBody].
+  final String body;
 
   /// Null for a free-form send of whatever is in the composer.
   final MessageTemplate? template;
@@ -91,6 +96,12 @@ class _ScheduleMessageSheetState extends State<_ScheduleMessageSheet> {
   late DateTime _date;
   late TimeOfDay _time;
 
+  /// The message being queued. Starts as whatever the composer held, so
+  /// the old way — type in the chat box, then open the clock — still works,
+  /// and stays editable here.
+  late final TextEditingController _body =
+      TextEditingController(text: widget.draft);
+
   Future<List<MessageTemplate>>? _templates;
   MessageTemplate? _template;
   final _params = <int, TextEditingController>{};
@@ -107,6 +118,7 @@ class _ScheduleMessageSheetState extends State<_ScheduleMessageSheet> {
 
   @override
   void dispose() {
+    _body.dispose();
     for (final controller in _params.values) {
       controller.dispose();
     }
@@ -121,7 +133,7 @@ class _ScheduleMessageSheetState extends State<_ScheduleMessageSheet> {
   bool get _withinWindow => ScheduleRules.withinWindow(widget.lastInboundAt, _at);
 
   bool get _hasFreeForm =>
-      widget.draft.trim().isNotEmpty || widget.hasStagedMedia;
+      _body.text.trim().isNotEmpty || widget.hasStagedMedia;
 
   Map<int, String> get _paramValues => <int, String>{
         for (final entry in _params.entries) entry.key: entry.value.text.trim(),
@@ -186,7 +198,7 @@ class _ScheduleMessageSheetState extends State<_ScheduleMessageSheet> {
     if (!_canSchedule) return;
     Navigator.of(context).pop(
       _withinWindow
-          ? ScheduledSend.freeForm(at: _at)
+          ? ScheduledSend.freeForm(at: _at, body: _body.text.trim())
           : ScheduledSend.template(
               at: _at,
               template: _template!,
@@ -289,15 +301,15 @@ class _ScheduleMessageSheetState extends State<_ScheduleMessageSheet> {
                   ),
                   const SizedBox(height: 12),
                   if (_withinWindow)
-                    _Hint(
+                    _MessageBox(
                       key: const ValueKey<String>('schedule-freeform'),
-                      text: _hasFreeForm
-                          ? widget.hasStagedMedia
-                              ? 'Scheduling the staged files'
-                                  '${widget.draft.trim().isEmpty ? '' : ' with your message as the caption'}.'
-                              : 'Scheduling: "${widget.draft.trim()}"'
-                          : 'Type a message in the chat box to schedule it as '
-                              'a normal message.',
+                      controller: _body,
+                      // Nothing to carry over means they came here to write
+                      // it, so put the caret in the box for them.
+                      autofocus: widget.draft.trim().isEmpty &&
+                          !widget.hasStagedMedia,
+                      stagedMedia: widget.hasStagedMedia,
+                      onChanged: () => setState(() {}),
                     )
                   else
                     _TemplateBox(
@@ -506,20 +518,80 @@ class _TemplateBox extends StatelessWidget {
   }
 }
 
-class _Hint extends StatelessWidget {
-  const _Hint({super.key, required this.text});
+/// The message to queue, written here.
+///
+/// It opens holding the composer's text, so scheduling what is already
+/// typed in the chat box works as it always did — but it is a real box, so
+/// a message can equally be written in the sheet without touching the
+/// composer first.
+class _MessageBox extends StatelessWidget {
+  const _MessageBox({
+    super.key,
+    required this.controller,
+    required this.autofocus,
+    required this.stagedMedia,
+    required this.onChanged,
+  });
 
-  final String text;
+  final TextEditingController controller;
+  final bool autofocus;
+
+  /// Files are staged in the composer, so this text is their caption.
+  final bool stagedMedia;
+  final VoidCallback onChanged;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Thread.input,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Text(text, style: const TextStyle(color: Thread.meta, fontSize: 13)),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        Text(
+          stagedMedia ? 'Caption' : 'Message',
+          style: const TextStyle(color: Thread.meta, fontSize: 12),
+        ),
+        const SizedBox(height: 6),
+        TextField(
+          key: const ValueKey<String>('schedule-message'),
+          controller: controller,
+          autofocus: autofocus,
+          onChanged: (_) => onChanged(),
+          minLines: 2,
+          maxLines: 5,
+          keyboardType: TextInputType.multiline,
+          textCapitalization: TextCapitalization.sentences,
+          style: const TextStyle(color: Thread.text, fontSize: 14),
+          decoration: InputDecoration(
+            hintText: stagedMedia
+                ? 'Add a caption for the staged files (optional)'
+                : 'Type the message to schedule',
+            hintStyle: const TextStyle(color: Thread.meta, fontSize: 13),
+            isDense: true,
+            filled: true,
+            fillColor: Thread.input,
+            contentPadding: const EdgeInsets.all(12),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(8),
+              borderSide: BorderSide.none,
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(8),
+              borderSide: BorderSide.none,
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(8),
+              borderSide: const BorderSide(color: Wa.accent),
+            ),
+          ),
+        ),
+        if (stagedMedia) ...<Widget>[
+          const SizedBox(height: 6),
+          const Text(
+            'The staged files go with it.',
+            style: TextStyle(color: Thread.meta, fontSize: 12),
+          ),
+        ],
+      ],
     );
   }
 }

@@ -20,6 +20,7 @@ import '../../models/tenant_context.dart';
 import '../../routing/app_router.dart';
 import '../../theme/wa_colors.dart';
 import '../chat/widgets/chat_tags_sheet.dart';
+import '../shell/settings_screen.dart';
 import 'chat_filter_state.dart';
 import 'widgets/chat_list_tile.dart';
 import 'widgets/chat_notes_sheet.dart';
@@ -867,6 +868,11 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
                         _isAdmin ? () => _openUsersFilter(scoped) : null,
                     tenantContext: widget.tenantContext,
                     onRefresh: _refresh,
+                    onSettings: () => showSettingsScreen(
+                      context,
+                      tenantContext: widget.tenantContext,
+                      onSignOut: widget.onSignOut,
+                    ),
                   ),
                 Expanded(child: _body(snapshot, visible, scoped)),
               ],
@@ -997,6 +1003,7 @@ class _Header extends StatelessWidget {
     this.onUsers,
     required this.tenantContext,
     required this.onRefresh,
+    required this.onSettings,
   });
 
   final TextEditingController searchController;
@@ -1025,6 +1032,9 @@ class _Header extends StatelessWidget {
 
   final TenantContext tenantContext;
   final VoidCallback onRefresh;
+
+  /// The ⚙ beside Refresh: account, workspace, this device, sign out.
+  final VoidCallback onSettings;
 
   @override
   Widget build(BuildContext context) {
@@ -1068,6 +1078,12 @@ class _Header extends StatelessWidget {
                     icon: Icons.refresh,
                     tooltip: 'Refresh',
                     onPressed: onRefresh,
+                  ),
+                  _HeaderIcon(
+                    key: const ValueKey<String>('settings-icon'),
+                    icon: Icons.settings_outlined,
+                    tooltip: 'Settings',
+                    onPressed: onSettings,
                   ),
                 ],
               ),

@@ -23,6 +23,9 @@ const double kTextBubbleMaxWidth = 520;
 /// A picture taller than this is cropped rather than scrolled past.
 const double kImageBubbleMaxHeight = 420;
 
+/// Where a file in a bubble stands on this device.
+enum AttachmentSaveState { notSaved, saving, saved }
+
 class MessageBubble extends StatelessWidget {
   const MessageBubble({
     super.key,
@@ -30,6 +33,9 @@ class MessageBubble extends StatelessWidget {
     this.repliedTo,
     this.repliedToName,
     this.onOpenAttachment,
+    this.onDownloadAttachment,
+    this.saveState = AttachmentSaveState.notSaved,
+    this.autoLoadMedia = true,
     this.onLongPress,
     this.onCancelScheduled,
     this.showTail = true,
@@ -56,6 +62,20 @@ class MessageBubble extends StatelessWidget {
   final Message? repliedTo;
   final String? repliedToName;
   final ValueChanged<MessageAttachment>? onOpenAttachment;
+
+  /// The ⬇ on a file row. Saving is only ever this, never a side effect of
+  /// tapping the file — tapping it opens it, or says it cannot be opened.
+  final ValueChanged<MessageAttachment>? onDownloadAttachment;
+
+  /// Whether the file is already on this device. Once it is, the ⬇ goes —
+  /// WhatsApp's row after a download — and while it is being fetched a
+  /// spinner stands in for it.
+  final AttachmentSaveState saveState;
+
+  /// Whether a picture loads by itself. False under a "No media" or
+  /// mobile-data rule from Storage and data: the bubble then shows a
+  /// tap-to-load tile in the picture's place until it is asked for.
+  final bool autoLoadMedia;
 
   @override
   Widget build(BuildContext context) {
@@ -141,6 +161,9 @@ class MessageBubble extends StatelessWidget {
                           _AttachmentView(
                             attachment: attachment,
                             onOpen: onOpenAttachment,
+                            onDownload: onDownloadAttachment,
+                            saveState: saveState,
+                            autoLoad: autoLoadMedia,
                             outbound: isOutbound,
                             avatar: avatar,
                             rounded: false,
@@ -178,6 +201,9 @@ class MessageBubble extends StatelessWidget {
                           _AttachmentView(
                             attachment: attachment,
                             onOpen: onOpenAttachment,
+                            onDownload: onDownloadAttachment,
+                            saveState: saveState,
+                            autoLoad: autoLoadMedia,
                             outbound: isOutbound,
                             avatar: avatar,
                           ),
@@ -203,9 +229,7 @@ class MessageBubble extends StatelessWidget {
                                 // place of ticks says the same.
                                 stamp: message.isScheduled
                                     ? scheduledStamp(message.scheduledAt)
-                                    : TimeFormat.bubbleStamp(
-                                        message.createdAt,
-                                      ),
+                                    : TimeFormat.bubbleStamp(message.createdAt),
                                 status: isOutbound ? message.status : null,
                                 outbound: isOutbound,
                               ),
@@ -412,6 +436,9 @@ class _AttachmentView extends StatelessWidget {
   const _AttachmentView({
     required this.attachment,
     required this.onOpen,
+    required this.onDownload,
+    required this.saveState,
+    required this.autoLoad,
     required this.outbound,
     this.avatar,
     this.rounded = true,
@@ -424,6 +451,9 @@ class _AttachmentView extends StatelessWidget {
 
   final MessageAttachment attachment;
   final ValueChanged<MessageAttachment>? onOpen;
+  final ValueChanged<MessageAttachment>? onDownload;
+  final AttachmentSaveState saveState;
+  final bool autoLoad;
 
   /// False when the bubble already clips the picture to its own shape, so
   /// rounding here would cut a second, smaller corner inside it.
@@ -440,50 +470,137 @@ class _AttachmentView extends StatelessWidget {
       );
     }
     if (attachment.isImage) {
-      // The picture keeps its own shape: full bubble width, height from its
-      // aspect ratio, cropped only once it would be taller than a phone
-      // screen's worth. Fixing the height to 200 is what sliced tall
-      // screenshots into strips.
-      return GestureDetector(
-        onTap: onOpen == null ? null : () => onOpen!(attachment),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(rounded ? 8 : 0),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(
-              minHeight: 120,
-              maxHeight: kImageBubbleMaxHeight,
-            ),
-            child: Image.network(
-              attachment.url,
-              fit: BoxFit.cover,
-              width: double.infinity,
-              loadingBuilder: (context, child, progress) => progress == null
-                  ? child
-                  : const SizedBox(
-                      height: 200,
-                      child: Center(
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Wa.accent,
-                        ),
-                      ),
-                    ),
-              errorBuilder: (_, _, _) =>
-                  _FileTile(attachment: attachment, onOpen: onOpen),
-            ),
+      return _LazyImage(
+        attachment: attachment,
+        autoLoad: autoLoad,
+        rounded: rounded,
+        onOpen: onOpen,
+        onDownload: onDownload,
+        saveState: saveState,
+      );
+    }
+    return _FileTile(
+      attachment: attachment,
+      onOpen: onOpen,
+      onDownload: onDownload,
+      saveState: saveState,
+    );
+  }
+}
+
+/// A picture that loads by itself, or waits to be asked — the auto-download
+/// rule from Storage and data decides which. Asking is a tap on the tile,
+/// and the answer is remembered for as long as the bubble lives.
+class _LazyImage extends StatefulWidget {
+  const _LazyImage({
+    required this.attachment,
+    required this.autoLoad,
+    required this.rounded,
+    required this.onOpen,
+    required this.onDownload,
+    required this.saveState,
+  });
+
+  final MessageAttachment attachment;
+  final bool autoLoad;
+  final bool rounded;
+  final ValueChanged<MessageAttachment>? onOpen;
+  final ValueChanged<MessageAttachment>? onDownload;
+  final AttachmentSaveState saveState;
+
+  @override
+  State<_LazyImage> createState() => _LazyImageState();
+}
+
+class _LazyImageState extends State<_LazyImage> {
+  bool _asked = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final attachment = widget.attachment;
+    if (!widget.autoLoad && !_asked) {
+      return InkWell(
+        key: const ValueKey<String>('media-tap-to-load'),
+        onTap: () => setState(() => _asked = true),
+        borderRadius: BorderRadius.circular(widget.rounded ? 8 : 0),
+        child: Container(
+          height: 160,
+          width: double.infinity,
+          decoration: BoxDecoration(
+            color: const Color(0x33000000),
+            borderRadius: BorderRadius.circular(widget.rounded ? 8 : 0),
+          ),
+          child: const Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: <Widget>[
+              Icon(Icons.download_outlined, size: 28, color: Thread.meta),
+              SizedBox(height: 6),
+              Text(
+                'Tap to load photo',
+                style: TextStyle(color: Thread.meta, fontSize: 12.5),
+              ),
+            ],
           ),
         ),
       );
     }
-    return _FileTile(attachment: attachment, onOpen: onOpen);
+    final onOpen = widget.onOpen;
+    final rounded = widget.rounded;
+    final onDownload = widget.onDownload;
+    final saveState = widget.saveState;
+    // The picture keeps its own shape: full bubble width, height from its
+    // aspect ratio, cropped only once it would be taller than a phone
+    // screen's worth. Fixing the height to 200 is what sliced tall
+    // screenshots into strips.
+    return GestureDetector(
+      onTap: onOpen == null ? null : () => onOpen(attachment),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(rounded ? 8 : 0),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(
+            minHeight: 120,
+            maxHeight: kImageBubbleMaxHeight,
+          ),
+          child: Image.network(
+            attachment.url,
+            fit: BoxFit.cover,
+            width: double.infinity,
+            loadingBuilder: (context, child, progress) => progress == null
+                ? child
+                : const SizedBox(
+                    height: 200,
+                    child: Center(
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Wa.accent,
+                      ),
+                    ),
+                  ),
+            errorBuilder: (_, _, _) => _FileTile(
+              attachment: attachment,
+              onOpen: onOpen,
+              onDownload: onDownload,
+              saveState: saveState,
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 
 class _FileTile extends StatelessWidget {
-  const _FileTile({required this.attachment, required this.onOpen});
+  const _FileTile({
+    required this.attachment,
+    required this.onOpen,
+    required this.onDownload,
+    required this.saveState,
+  });
 
   final MessageAttachment attachment;
   final ValueChanged<MessageAttachment>? onOpen;
+  final ValueChanged<MessageAttachment>? onDownload;
+  final AttachmentSaveState saveState;
 
   @override
   Widget build(BuildContext context) {
@@ -497,7 +614,7 @@ class _FileTile extends StatelessWidget {
     return InkWell(
       onTap: onOpen == null ? null : () => onOpen!(attachment),
       child: Container(
-        padding: const EdgeInsets.all(10),
+        padding: const EdgeInsets.fromLTRB(10, 10, 4, 10),
         decoration: BoxDecoration(
           color: const Color(0x33000000),
           borderRadius: BorderRadius.circular(8),
@@ -515,6 +632,41 @@ class _FileTile extends StatelessWidget {
                 style: const TextStyle(color: Thread.text, fontSize: 13),
               ),
             ),
+            // WhatsApp's ⬇ on a file: saving is a thing you ask for, not
+            // what happens when you tap the name to look at it. Once the
+            // file is here the icon goes, so the row says "yours already".
+            if (onDownload != null &&
+                saveState == AttachmentSaveState.notSaved) ...<Widget>[
+              const SizedBox(width: 6),
+              IconButton(
+                key: const ValueKey<String>('attachment-download'),
+                onPressed: () => onDownload!(attachment),
+                icon: const Icon(Icons.download_outlined, size: 20),
+                color: Thread.meta,
+                tooltip: 'Download',
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
+              ),
+            ] else if (saveState == AttachmentSaveState.saving) ...<Widget>[
+              const SizedBox(width: 6),
+              const SizedBox(
+                key: ValueKey<String>('attachment-saving'),
+                width: 30,
+                height: 30,
+                child: Center(
+                  child: SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Thread.meta,
+                    ),
+                  ),
+                ),
+              ),
+            ] else
+              const SizedBox(width: 6),
           ],
         ),
       ),
@@ -547,8 +699,10 @@ class _BodyWithStamp extends StatelessWidget {
   static const double _tickGap = 3;
   static const double _tickWidth = 14;
 
-  /// Breathing room between the last word and the stamp.
-  static const double _lead = 8;
+  /// Breathing room between the last word and the stamp. 8px read as the
+  /// date running into the text once the stamp grew a day ("17 Sep, 6:30 PM")
+  /// on a queued message; WhatsApp leaves about this much.
+  static const double _lead = 16;
 
   /// How wide the stamp row will actually be, in the font it will actually
   /// use. A guessed constant (62px) was narrower than "10:24 AM ✓✓" in Inter,
@@ -653,7 +807,7 @@ class _ScheduledFooter extends StatelessWidget {
     final retry = message.retryNote;
     final String? note = held
         ? "Held back by WhatsApp (customer's marketing limit) · retries "
-            'automatically at ${scheduledStamp(message.scheduledAt)}'
+              'automatically at ${scheduledStamp(message.scheduledAt)}'
         : retry;
 
     return Padding(

@@ -161,6 +161,52 @@ void main() {
 
       expect(picked?.id, 't2');
     });
+
+    testWidgets('the search box narrows the list by name or body',
+        (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => TextButton(
+                onPressed: () => showTemplatesSheet(
+                  context,
+                  load: () async => const <MessageTemplate>[shipped, plain],
+                  chatName: 'Mahi',
+                ),
+                child: const Text('open'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+      expect(find.text('vendor_order_shipped'), findsOneWidget);
+      expect(find.text('deepan_test'), findsOneWidget);
+
+      final box = find.byKey(const ValueKey<String>('templates-search'));
+      // By name, any case.
+      await tester.enterText(box, 'SHIPPED');
+      await tester.pump();
+      expect(find.text('vendor_order_shipped'), findsOneWidget);
+      expect(find.text('deepan_test'), findsNothing);
+
+      // By a word in the body.
+      await tester.enterText(box, 'hlo sir');
+      await tester.pump();
+      expect(find.text('vendor_order_shipped'), findsNothing);
+      expect(find.text('deepan_test'), findsOneWidget);
+
+      // Nothing matching says so, and × brings everything back.
+      await tester.enterText(box, 'zzz');
+      await tester.pump();
+      expect(find.textContaining('No template matches "zzz"'), findsOneWidget);
+      await tester.tap(find.byTooltip('Clear search'));
+      await tester.pump();
+      expect(find.text('vendor_order_shipped'), findsOneWidget);
+      expect(find.text('deepan_test'), findsOneWidget);
+    });
   });
 
   group('Send template sheet', () {

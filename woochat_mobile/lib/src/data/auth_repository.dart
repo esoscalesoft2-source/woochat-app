@@ -49,5 +49,9 @@ class AuthRepository {
   Future<void> sendPasswordReset(String email) =>
       db.auth.resetPasswordForEmail(email.trim());
 
-  Future<void> signOut() => db.auth.signOut();
+  /// Signs THIS device out. Supabase's default scope is global — it revokes
+  /// every session the user has, so a Sign out on the website was logging
+  /// the phone out too, which the phone then reported as "your session
+  /// expired". Local scope ends only this device's session.
+  Future<void> signOut() => db.auth.signOut(scope: SignOutScope.local);
 }

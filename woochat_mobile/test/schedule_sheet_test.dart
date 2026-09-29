@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:woochat_mobile/src/data/templates_repository.dart';
 import 'package:woochat_mobile/src/features/chat/widgets/message_composer.dart';
+import 'package:woochat_mobile/src/features/chat/widgets/schedule_message_sheet.dart';
 import 'package:woochat_mobile/src/theme/app_theme.dart';
 
 void main() {
@@ -115,7 +116,13 @@ void main() {
       expect(find.text('Time'), findsOneWidget);
       expect(find.text('Cancel'), findsOneWidget);
       expect(find.text('Schedule'), findsOneWidget);
-      expect(find.textContaining('Scheduling: "Hello"'), findsOneWidget);
+      // The chat box's text comes over into the sheet's own box, where it
+      // can still be changed.
+      expect(find.text('Message'), findsOneWidget);
+      final box = tester.widget<TextField>(
+        find.byKey(const ValueKey<String>('schedule-message')),
+      );
+      expect(box.controller?.text, 'Hello');
     });
 
     testWidgets('with the window closed, a template is required', (tester) async {
@@ -164,10 +171,114 @@ void main() {
         find.widgetWithText(FilledButton, 'Schedule'),
       );
       expect(button.onPressed, isNull);
-      expect(
-        find.textContaining('Type a message in the chat box'),
-        findsOneWidget,
+      expect(find.text('Type the message to schedule'), findsOneWidget);
+    });
+
+    testWidgets('a message typed in the sheet is what gets queued',
+        (tester) async {
+      // Nothing in the chat box: the whole message is written here.
+      ScheduledSend? queued;
+      var draftSeen = '';
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.dark(),
+          home: Scaffold(
+            body: Column(
+              children: <Widget>[
+                const Expanded(child: SizedBox()),
+                MessageComposer(
+                  onSend: (_) async => true,
+                  windowOpen: true,
+                  onTemplates: () {},
+                  onAttach: (_) {},
+                  onSchedule: (send, draft, _) async {
+                    queued = send;
+                    draftSeen = draft;
+                    return true;
+                  },
+                  lastInboundAt: recentInbound,
+                  loadTemplates: () async => templates,
+                  onBlocked: () {},
+                  onVoiceNote: (_) async => true,
+                  onRecorderProblem: (_) {},
+                ),
+              ],
+            ),
+          ),
+        ),
       );
+      await tester.tap(find.byIcon(Icons.schedule));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(
+        find.byKey(const ValueKey<String>('schedule-message')),
+        '  Kalai vanakkam  ',
+      );
+      await tester.pump();
+
+      final ready = tester.widget<FilledButton>(
+        find.widgetWithText(FilledButton, 'Schedule'),
+      );
+      expect(ready.onPressed, isNotNull, reason: 'typing here should arm it');
+
+      await tester.tap(find.widgetWithText(FilledButton, 'Schedule'));
+      await tester.pumpAndSettle();
+
+      expect(queued?.isTemplate, isFalse);
+      expect(queued?.body, 'Kalai vanakkam');
+      expect(draftSeen, 'Kalai vanakkam');
+    });
+
+    testWidgets('editing the carried-over text queues the edit, not the draft',
+        (tester) async {
+      ScheduledSend? queued;
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.dark(),
+          home: Scaffold(
+            body: Column(
+              children: <Widget>[
+                const Expanded(child: SizedBox()),
+                MessageComposer(
+                  onSend: (_) async => true,
+                  windowOpen: true,
+                  onTemplates: () {},
+                  onAttach: (_) {},
+                  onSchedule: (send, _, _) async {
+                    queued = send;
+                    return true;
+                  },
+                  lastInboundAt: recentInbound,
+                  loadTemplates: () async => templates,
+                  onBlocked: () {},
+                  onVoiceNote: (_) async => true,
+                  onRecorderProblem: (_) {},
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+      await tester.enterText(find.byType(TextField), 'Hello');
+      await tester.pump();
+      await tester.tap(find.byIcon(Icons.schedule));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(
+        find.byKey(const ValueKey<String>('schedule-message')),
+        'Hello again',
+      );
+      await tester.pump();
+      await tester.tap(find.widgetWithText(FilledButton, 'Schedule'));
+      await tester.pumpAndSettle();
+
+      expect(queued?.body, 'Hello again');
     });
 
     testWidgets('dragging it down dismisses it', (tester) async {

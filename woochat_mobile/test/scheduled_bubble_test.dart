@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:woochat_mobile/src/core/constants.dart';
 import 'package:woochat_mobile/src/features/chat/widgets/message_bubble.dart';
@@ -159,6 +160,32 @@ void main() {
       expect(find.byKey(const ValueKey<String>('scheduled-note')), findsNothing);
       // Back to created_at and a delivery tick.
       expect(find.byIcon(Icons.done), findsOneWidget);
+    });
+
+    testWidgets('the day-long stamp keeps clear of the text', (tester) async {
+      // Wide enough that a two-letter message and the stamp share a line.
+      tester.view.physicalSize = const Size(900, 600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      await pump(tester, scheduled(content: 'hi'));
+
+      final body = find.byWidgetPredicate(
+        (w) => w is RichText && w.text.toPlainText().startsWith('hi'),
+      );
+      final paragraph = tester.renderObject<RenderParagraph>(body);
+      final wordsEnd = tester.getTopLeft(body).dx +
+          paragraph
+              .getBoxesForSelection(
+                const TextSelection(baseOffset: 0, extentOffset: 2),
+              )
+              .last
+              .right;
+      final stamp = tester.getRect(find.text('16 Sep, 9:30 AM'));
+
+      // Same line, and a real gap — 8px read as the date running into the
+      // words once the stamp carried a day.
+      expect(stamp.top, lessThan(tester.getRect(body).bottom));
+      expect(stamp.left - wordsEnd, greaterThanOrEqualTo(14));
     });
   });
 }

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 
+import '../../../data/lead_activity_repository.dart';
 import '../../../data/summaries_repository.dart';
 import '../../../models/chat.dart';
 import '../../../models/chat_filters.dart';
@@ -28,6 +30,7 @@ Future<void> showContactInfoSheet(
   List<Note> notes = const <Note>[],
   Future<List<ChatSummary>> Function()? loadSummaries,
   Future<ChatSummary> Function(String text)? addSummary,
+  Future<List<LeadStageEvent>> Function()? loadLeadActivity,
 }) {
   final name = contactName?.trim().isNotEmpty ?? false
       ? contactName!.trim()
@@ -133,6 +136,8 @@ Future<void> showContactInfoSheet(
               _NotesSection(notes: notes),
               if (loadSummaries != null)
                 _SummarySection(load: loadSummaries, add: addSummary),
+              if (loadLeadActivity != null)
+                _LeadActivitySection(load: loadLeadActivity),
             ],
           ),
         ),
@@ -440,6 +445,180 @@ class _SummaryCard extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Every stage the lead behind this chat has moved through, newest first —
+/// the web lead card's "Lead activity" panel, laid out under Summary in the
+/// same way. Read-only: a trigger writes the history, and nothing here can.
+class _LeadActivitySection extends StatefulWidget {
+  const _LeadActivitySection({required this.load});
+
+  final Future<List<LeadStageEvent>> Function() load;
+
+  @override
+  State<_LeadActivitySection> createState() => _LeadActivitySectionState();
+}
+
+class _LeadActivitySectionState extends State<_LeadActivitySection> {
+  late final Future<List<LeadStageEvent>> _future = widget.load();
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<List<LeadStageEvent>>(
+      future: _future,
+      builder: (context, snapshot) {
+        final count = snapshot.data?.length ?? 0;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            Padding(
+              padding: const EdgeInsets.only(top: 12, bottom: 4),
+              child: Row(
+                children: <Widget>[
+                  const Icon(Icons.timeline_outlined, size: 20, color: Wa.icon),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Text(
+                      count > 0 ? 'Lead activity ($count)' : 'Lead activity',
+                      key: const ValueKey<String>('lead-activity-title'),
+                      style: const TextStyle(color: Thread.meta, fontSize: 12),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.only(left: 36, top: 4, bottom: 8),
+              child: _body(snapshot),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _body(AsyncSnapshot<List<LeadStageEvent>> snapshot) {
+    if (snapshot.hasError) {
+      return Text(
+        '${snapshot.error}',
+        style: const TextStyle(color: Wa.error, fontSize: 12.5),
+      );
+    }
+    if (!snapshot.hasData) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 12),
+        child: Center(
+          child: SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(strokeWidth: 2, color: Wa.accent),
+          ),
+        ),
+      );
+    }
+    final events = snapshot.data!;
+    if (events.isEmpty) {
+      // Same wording as the web: a lead has no history until it next moves,
+      // and that is not the panel being broken.
+      return const Text(
+        'No pipeline changes recorded yet. Moves are logged from now on.',
+        style: TextStyle(color: Thread.meta, fontSize: 14.5),
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        for (final event in events) _StageEventCard(event: event),
+      ],
+    );
+  }
+}
+
+class _StageEventCard extends StatelessWidget {
+  const _StageEventCard({required this.event});
+
+  final LeadStageEvent event;
+
+  @override
+  Widget build(BuildContext context) {
+    const stamp = TextStyle(color: Thread.meta, fontSize: 11.5);
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: Wa.input,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          if (event.isBaseline)
+            // No arrow: nobody recorded what it came from, and drawing one
+            // would be inventing the half that is not known.
+            Text(
+              event.to,
+              style: const TextStyle(
+                color: Thread.text,
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+              ),
+            )
+          else
+            Text.rich(
+              TextSpan(
+                children: <InlineSpan>[
+                  TextSpan(
+                    text: event.from ?? 'New',
+                    style: const TextStyle(color: Thread.meta),
+                  ),
+                  const TextSpan(text: '  →  ',
+                      style: TextStyle(color: Thread.meta)),
+                  TextSpan(
+                    text: event.to,
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                ],
+              ),
+              style: const TextStyle(color: Thread.text, fontSize: 14),
+            ),
+          const SizedBox(height: 3),
+          Text.rich(
+            TextSpan(
+              children: <InlineSpan>[
+                if (event.isBaseline) const TextSpan(text: 'as at '),
+                TextSpan(text: _stamp(event.at)),
+                // No user means nothing was pressed: the callback cron moved
+                // it. Worth saying, or it reads as an unattributed change.
+                if (event.isAutomatic) const TextSpan(text: ' · automatic'),
+                if (event.by != null) ...<InlineSpan>[
+                  const TextSpan(text: ' · '),
+                  TextSpan(
+                    text: event.by,
+                    style: const TextStyle(color: Wa.tickBlue),
+                  ),
+                ],
+              ],
+            ),
+            style: stamp,
+          ),
+          if (event.isBaseline)
+            const Padding(
+              padding: EdgeInsets.only(top: 2),
+              child: Text(
+                'Where this lead stood when logging began — earlier moves '
+                'were not recorded.',
+                style: TextStyle(color: Thread.meta, fontSize: 11),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// "16 Sep 2026, 12:00 AM" — the web's format, day always spelt since the
+  /// history spans days.
+  static String _stamp(DateTime at) =>
+      DateFormat('dd MMM yyyy, h:mm a').format(at);
 }
 
 /// The "Add summary" box. Returns the text, or null when dismissed.

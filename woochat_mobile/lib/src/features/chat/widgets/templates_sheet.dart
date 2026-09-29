@@ -60,6 +60,26 @@ class _TemplatesSheet extends StatefulWidget {
 
 class _TemplatesSheetState extends State<_TemplatesSheet> {
   late Future<List<MessageTemplate>> _future = widget.load();
+  final _search = TextEditingController();
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
+
+  /// Name or body, any case. With 280-odd approved templates the list is
+  /// not something to scroll; the name is what people remember.
+  List<MessageTemplate> _matching(List<MessageTemplate> all) {
+    final query = _search.text.trim().toLowerCase();
+    if (query.isEmpty) return all;
+    return <MessageTemplate>[
+      for (final template in all)
+        if (template.name.toLowerCase().contains(query) ||
+            (template.body?.toLowerCase().contains(query) ?? false))
+          template,
+    ];
+  }
 
   /// Creating is possible only when the caller wired all three pieces.
   bool get _canCreate =>
@@ -132,6 +152,43 @@ class _TemplatesSheetState extends State<_TemplatesSheet> {
                 style: const TextStyle(color: Thread.meta, fontSize: 12),
               ),
             ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+              child: TextField(
+                key: const ValueKey<String>('templates-search'),
+                controller: _search,
+                onChanged: (_) => setState(() {}),
+                style: const TextStyle(color: Thread.text, fontSize: 14),
+                decoration: InputDecoration(
+                  hintText: 'Search templates',
+                  hintStyle: const TextStyle(color: Thread.meta, fontSize: 14),
+                  prefixIcon: const Icon(Icons.search, color: Wa.icon, size: 20),
+                  suffixIcon: _search.text.isEmpty
+                      ? null
+                      : IconButton(
+                          icon: const Icon(Icons.close, size: 18),
+                          color: Wa.icon,
+                          tooltip: 'Clear search',
+                          onPressed: () => setState(_search.clear),
+                        ),
+                  isDense: true,
+                  filled: true,
+                  fillColor: Thread.input,
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(24),
+                    borderSide: BorderSide.none,
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(24),
+                    borderSide: const BorderSide(color: Wa.accent, width: 1.5),
+                  ),
+                ),
+              ),
+            ),
             const Divider(height: 1, color: Wa.divider),
             Flexible(
               child: FutureBuilder<List<MessageTemplate>>(
@@ -153,11 +210,17 @@ class _TemplatesSheetState extends State<_TemplatesSheet> {
                     );
                   }
 
-                  final templates = snapshot.data!;
-                  if (templates.isEmpty) {
+                  final all = snapshot.data!;
+                  if (all.isEmpty) {
                     return const _Message(
                       text: 'No approved templates yet. Create and submit one '
                           'in Meta, then it appears here.',
+                    );
+                  }
+                  final templates = _matching(all);
+                  if (templates.isEmpty) {
+                    return _Message(
+                      text: 'No template matches "${_search.text.trim()}".',
                     );
                   }
 

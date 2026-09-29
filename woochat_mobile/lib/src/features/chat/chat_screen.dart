@@ -1,9 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:url_launcher/url_launcher.dart';
+import 'package:open_filex/open_filex.dart';
 
 import '../../core/constants.dart';
 import '../../data/attachment_picker.dart';
@@ -12,9 +13,14 @@ import '../../data/chat_assignment_repository.dart';
 import '../../data/chat_tags_repository.dart';
 import '../../data/chats_repository.dart';
 import '../../data/contact_context_repository.dart';
+import '../../data/downloads_repository.dart';
+import '../../data/media_policy.dart';
+import '../../data/photo_compressor.dart';
+import '../../data/storage_settings.dart';
 import '../../data/leads_repository.dart';
 import '../../data/messages_repository.dart';
 import '../../data/shortcuts_repository.dart';
+import '../../data/lead_activity_repository.dart';
 import '../../data/summaries_repository.dart';
 import '../../data/templates_repository.dart';
 import '../../models/chat.dart';
@@ -32,6 +38,8 @@ import 'widgets/chat_tags_sheet.dart';
 import 'widgets/contact_info_sheet.dart';
 import 'widgets/create_quick_reply_sheet.dart';
 import 'widgets/forward_sheet.dart';
+import '../call/call_screen.dart';
+import 'widgets/document_viewer.dart';
 import 'widgets/image_viewer.dart';
 import 'widgets/message_bubble.dart';
 import 'widgets/message_composer.dart';
@@ -64,6 +72,13 @@ class _ChatScreenState extends State<ChatScreen> {
   final _shortcuts = const ShortcutsRepository();
   final _leads = const LeadsRepository();
   final _summaries = const SummariesRepository();
+  final _leadActivity = const LeadActivityRepository();
+  final _downloads = DownloadsRepository();
+
+  /// Files already on this device (by URL) and the ones being fetched, so
+  /// each row can show ⬇, a spinner, or nothing.
+  final _saved = <String>{};
+  final _saving = <String>{};
   final _searchController = TextEditingController();
 
   /// The chat's labels and categories. Loaded once the thread opens; the
@@ -104,6 +119,10 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
+    _loadSaved();
+    // A change of connection or of the auto-download setting redraws the
+    // thread, so pictures start or stop loading by themselves at once.
+    MediaPolicy.instance.addListener(_onMediaPolicy);
     _loadTags();
     _loadAssignment();
     _loadContactContext();
@@ -184,8 +203,13 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    MediaPolicy.instance.removeListener(_onMediaPolicy);
     _searchController.dispose();
     super.dispose();
+  }
+
+  void _onMediaPolicy() {
+    if (mounted) setState(() {});
   }
 
   Future<void> _loadTags() async {
@@ -301,6 +325,18 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  /// A WhatsApp call from the business number, in the app. The call
+  /// screen owns everything from here: permission, the offer, ringing,
+  /// audio, hanging up.
+  Future<void> _callCustomer() => showCallScreen(
+        context,
+        chat: widget.chat,
+        name: _contact.name?.trim().isNotEmpty ?? false
+            ? _contact.name!.trim()
+            : widget.chat.displayName,
+        photoUrl: _contact.photoUrl,
+      );
+
   Future<void> _openContactInfo() async {
     // Labels on the chat plus any held on the contact record itself, the
     // same union the list row draws as dots.
@@ -321,6 +357,7 @@ class _ChatScreenState extends State<ChatScreen> {
         authUserId: widget.tenantContext.authUserId,
         text: text,
       ),
+      loadLeadActivity: () => _leadActivity.forChat(widget.chat.id),
       assignedName: _assignedName,
       labels: <String>[
         for (final label in _chatTags.labels)
@@ -880,9 +917,15 @@ class _ChatScreenState extends State<ChatScreen> {
   /// the rest bare, in the order they were picked. The sheet has already
   /// closed; the bubbles appear together the moment the rows land.
   Future<void> _sendAttachments(
-    List<PickedAttachment> attachments, {
+    List<PickedAttachment> picked, {
     required String caption,
   }) async {
+    // Standard quality (the default, as on WhatsApp) shrinks photos before
+    // they go up; HD sends them as picked. Settings → Storage and data.
+    final attachments =
+        StorageSettings.instance.uploadQuality == UploadQuality.standard
+            ? await Future.wait(picked.map(PhotoCompressor.standardQuality))
+            : picked;
     final stamp = DateTime.now().millisecondsSinceEpoch;
     final List<String?> urls;
     try {
@@ -1161,7 +1204,9 @@ class _ChatScreenState extends State<ChatScreen> {
           }
         });
       }
-      _notify('Message scheduled');
+      // No toast: the queued bubble with its clock and time IS the
+      // confirmation, and a snackbar over it was saying the same thing
+      // twice while covering the composer.
       return true;
     } catch (error) {
       _showError('Could not schedule the message: $error');
@@ -1206,7 +1251,10 @@ class _ChatScreenState extends State<ChatScreen> {
     MessageAttachment attachment, {
     String caption = '',
   }) async {
-    if (attachment.isImage) {
+    // Anything the app can show, it shows itself — a tap in a chat should
+    // not bounce out to a browser tab. Pictures include a photo sent as a
+    // document, which arrives typed "document" with a .jpg name.
+    if (attachment.looksLikeImage) {
       await showImageViewer(
         context,
         attachment: attachment,
@@ -1215,10 +1263,117 @@ class _ChatScreenState extends State<ChatScreen> {
       );
       return;
     }
-    final uri = Uri.tryParse(attachment.url);
-    if (uri == null) return;
-    final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
-    if (!opened) _showError('Could not open ${attachment.name}.');
+    if (attachment.isPdf) {
+      await showDocumentViewer(context, attachment: attachment);
+      return;
+    }
+    // Word, Excel and the like have no renderer here. Tapping the name used
+    // to hand the link to the browser, which simply downloaded the file —
+    // so a look at a document was a copy in Downloads. Saving is now the ⬇
+    // on the row, and only that. Once saved, the tap opens the saved copy
+    // in whatever the phone has for it.
+    if (_saved.contains(attachment.url)) {
+      if (kIsWeb) {
+        // The browser's kept copy opens in a new tab: shown if it can be,
+        // saved if not — either way it was the tap that asked.
+        if (await _downloads.openKept(attachment.url)) return;
+      } else {
+        final path = await _downloads.localPathFor(attachment.url);
+        if (path != null) {
+          final result = await OpenFilex.open(path);
+          if (result.type != ResultType.done) {
+            _showError('Nothing on this device can open ${attachment.name}.');
+          }
+          return;
+        }
+      }
+      // The copy is gone: put the ⬇ back.
+      if (mounted) setState(() => _saved.remove(attachment.url));
+    }
+    _notify('Tap ⬇ to download ${attachment.name}.');
+  }
+
+  Future<void> _loadSaved() async {
+    final urls = await _downloads.downloadedUrls();
+    if (mounted) setState(() => _saved.addAll(urls));
+  }
+
+  AttachmentSaveState _saveStateOf(Message message) {
+    final url = message.attachment?.url;
+    if (url == null) return AttachmentSaveState.notSaved;
+    if (_saving.contains(url)) return AttachmentSaveState.saving;
+    return _saved.contains(url)
+        ? AttachmentSaveState.saved
+        : AttachmentSaveState.notSaved;
+  }
+
+  /// Files the auto-download rule already fetched or declined this visit,
+  /// so a redraw does not ask twice.
+  final _autoConsidered = <String>{};
+
+  /// WhatsApp's auto-download for files: audio, videos and documents that
+  /// the rule for the current connection allows are fetched as they
+  /// appear, so the ⬇ is already gone by the time they are looked at —
+  /// to the device on a phone, into the browser's store on the web. Only
+  /// recent ones: opening an old thread must not pull a year of invoices.
+  void _autoDownload(List<Message> messages) {
+    final since = DateTime.now().subtract(const Duration(days: 7));
+    final wanted = <Message>[
+      for (final message in messages)
+        if (message.attachment case final attachment?)
+          // By the marker's type, not the file's name: a screenshot sent
+          // AS a document shows as a file row with a ⬇, so the Documents
+          // tick is the one that governs it. (Photos sent as photos load
+          // inline and are governed by the Photos tick in the bubble.)
+          if (MediaKind.of(attachment.type) != null &&
+              MediaKind.of(attachment.type) != MediaKind.photos &&
+              (message.createdAt?.isAfter(since) ?? false) &&
+              !_saved.contains(attachment.url) &&
+              !_saving.contains(attachment.url) &&
+              !_autoConsidered.contains(attachment.url) &&
+              MediaPolicy.instance.autoLoads(attachment.type))
+            message,
+    ]..sort((a, b) => b.createdAt!.compareTo(a.createdAt!)); // newest first
+    for (final message in wanted.take(_autoDownloadBatch)) {
+      final attachment = message.attachment!;
+      _autoConsidered.add(attachment.url);
+      // After this frame: the build must not set state on itself.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _downloadAttachment(attachment, quiet: true);
+      });
+    }
+  }
+
+  static const int _autoDownloadBatch = 10;
+
+  /// The ⬇ on a file row: saves the file on this device and, once it is
+  /// there, takes the icon away — the row is then "already yours".
+  /// [quiet] is the auto-download: no toast for what nobody tapped.
+  Future<void> _downloadAttachment(
+    MessageAttachment attachment, {
+    bool quiet = false,
+  }) async {
+    if (_saving.contains(attachment.url)) return;
+    setState(() => _saving.add(attachment.url));
+    try {
+      await (quiet
+          ? _downloads.prefetch(attachment)
+          : _downloads.download(attachment));
+      if (!mounted) return;
+      setState(() {
+        _saving.remove(attachment.url);
+        _saved.add(attachment.url);
+      });
+      if (!quiet) {
+        _notify(kIsWeb
+            ? 'Downloading ${attachment.name}'
+            : 'Saved ${attachment.name}');
+      }
+    } on DownloadException catch (error) {
+      if (!mounted) return;
+      setState(() => _saving.remove(attachment.url));
+      if (!quiet) _showError(error.message);
+    }
   }
 
   List<Message> _visible(List<Message> messages) {
@@ -1240,6 +1395,7 @@ class _ChatScreenState extends State<ChatScreen> {
         stream: _messages,
         builder: (context, snapshot) {
           final messages = _withPending(snapshot.data ?? const <Message>[]);
+          _autoDownload(messages);
 
           return Column(
             children: <Widget>[
@@ -1368,6 +1524,16 @@ class _ChatScreenState extends State<ChatScreen> {
               ],
             ),
       actions: <Widget>[
+        // WhatsApp's 📞 beside search: a WhatsApp voice call from the
+        // business number, placed and carried inside the app (Meta's
+        // Calling API; call-router does the signalling).
+        if (widget.chat.normalisedPhone.isNotEmpty)
+          IconButton(
+            key: const ValueKey<String>('thread-call'),
+            onPressed: _callCustomer,
+            icon: const Icon(Icons.call_outlined),
+            tooltip: 'Call',
+          ),
         IconButton(
           onPressed: () => setState(() {
             _searching = !_searching;
@@ -1505,6 +1671,10 @@ class _ChatScreenState extends State<ChatScreen> {
               : widget.chat.displayName,
           onOpenAttachment: (attachment) =>
               _openAttachment(attachment, caption: message.body),
+          onDownloadAttachment: _downloadAttachment,
+          saveState: _saveStateOf(message),
+          autoLoadMedia: message.attachment == null ||
+              MediaPolicy.instance.autoLoads(message.attachment!.type),
           onLongPress: () => _openMessageActions(message),
           onCancelScheduled: message.isScheduled
               ? () => _cancelScheduled(message)

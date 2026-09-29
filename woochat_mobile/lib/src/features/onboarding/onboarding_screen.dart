@@ -4,6 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 
 import '../../routing/app_router.dart';
 import '../../theme/wa_colors.dart';
+import 'onboarding_slides.dart';
 
 /// The onboarding mockup's token names, resolved onto the app-wide WhatsApp
 /// palette so the very first screen is the same black as the rest.
@@ -19,24 +20,6 @@ class _T {
   static const Color fade100 = Wa.chatBackground;
   static const double hPadding = 24; // px-6
 }
-
-/// One carousel page.
-/// One onboarding page: a poster that carries its own headline, so nothing
-/// is drawn over it.
-class _Slide {
-  const _Slide({required this.image});
-
-  final String image;
-}
-
-/// The three marketing posters, in order — "One Upgrade, Two Benefits",
-/// "Run Your Business Without WhatsApp Ban Worries", "One follow-up can
-/// turn a silent lead into a paying customer".
-const List<_Slide> _slides = <_Slide>[
-  _Slide(image: 'assets/images/onboarding_1.jpg'),
-  _Slide(image: 'assets/images/onboarding_2.jpg'),
-  _Slide(image: 'assets/images/onboarding_3.jpg'),
-];
 
 /// Full-screen onboarding carousel shown before the login screen.
 ///
@@ -86,10 +69,10 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         children: <Widget>[
           PageView.builder(
             controller: _controller,
-            itemCount: _slides.length,
+            itemCount: onboardingSlides.length,
             onPageChanged: (index) => setState(() => _index = index),
             itemBuilder: (context, index) => _SlideView(
-              slide: _slides[index],
+              slide: onboardingSlides[index],
               // Keep the headline clear of the fixed dots + button block.
               bottomInset: _BottomBar.height + bottomSafe,
             ),
@@ -110,7 +93,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             child: SafeArea(
               top: false,
               child: _BottomBar(
-                pageCount: _slides.length,
+                pageCount: onboardingSlides.length,
                 index: _index,
                 onGetStarted: _goToLogin,
               ),
@@ -122,44 +105,134 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   }
 }
 
-/// One poster, full-bleed, with only its foot faded so the dots and the
-/// button read over it.
+/// One poster, whole, with its headline below the subject: the picture
+/// fills the width from the top, its empty foot fades into the background,
+/// and the words sit on that fade — over floor, never over the subject.
 class _SlideView extends StatelessWidget {
   const _SlideView({required this.slide, required this.bottomInset});
 
-  final _Slide slide;
+  final OnboardingSlide slide;
+
+  /// The dots + button block is fixed over this page, so the headline is
+  /// kept clear of it.
   final double bottomInset;
+
+  /// Every headline gets the same room, so the artwork above it is the same
+  /// size on all three pages and nothing jumps as they swipe.
+  static const double _titleHeight = 124;
+
+  /// Between the last line of the headline and the dots. The headline is
+  /// anchored to the BOTTOM of its room, so a two-line one sits this close
+  /// to the dots rather than leaving a gap the size of its missing lines.
+  static const double _titleToDots = 20;
 
   @override
   Widget build(BuildContext context) {
     return Stack(
       fit: StackFit.expand,
       children: <Widget>[
-        Image.asset(
-          slide.image,
-          fit: BoxFit.cover,
-          // Keep the headline at the top of the poster in frame on a wide
-          // or short screen; the floor is what gets cropped.
-          alignment: Alignment.topCenter,
-          errorBuilder: (_, _, _) => const ColoredBox(color: _T.background),
+        // The poster exactly as delivered — the whole 9:16 picture at the
+        // screen's width, from the top, nothing cut off. It runs behind the
+        // header (its top is dark ceiling) and, on a phone, its foot runs
+        // under the headline and the dots: that foot is empty marble floor,
+        // which the fade below turns into the background the words sit on.
+        Positioned.fill(
+          child: Stack(
+            fit: StackFit.expand,
+            children: <Widget>[
+              Image.asset(
+                slide.image,
+                fit: BoxFit.fitWidth,
+                alignment: Alignment.topCenter,
+                errorBuilder: (_, _, _) =>
+                    const ColoredBox(color: _T.background),
+              ),
+              const DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    stops: <double>[0.0, 0.50, 0.72, 1.0],
+                    colors: <Color>[
+                      Color(0x00000000),
+                      Color(0x00000000),
+                      _T.fade70,
+                      _T.fade100,
+                    ],
+                  ),
+                ),
+                child: SizedBox.expand(),
+              ),
+            ],
+          ),
         ),
-        const DecoratedBox(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              stops: <double>[0.0, 0.70, 0.90, 1.0],
-              colors: <Color>[
-                Color(0x00000000),
-                Color(0x00000000),
-                _T.fade70,
-                _T.fade100,
-              ],
+        Positioned(
+          left: 0,
+          right: 0,
+          bottom: bottomInset,
+          height: _titleHeight,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(
+              _T.hPadding,
+              0,
+              _T.hPadding,
+              _titleToDots,
+            ),
+            child: Align(
+              alignment: Alignment.bottomLeft,
+              child: _Headline(slide: slide),
             ),
           ),
-          child: SizedBox.expand(),
         ),
       ],
+    );
+  }
+}
+
+/// The page's promise, in the app's own type rather than the poster's.
+///
+/// Colour and font come from the theme — [Wa.title] for the line, the
+/// accent green for the part of it the page is actually promising — so a
+/// new poster in any lettering still reads as this app underneath.
+class _Headline extends StatelessWidget {
+  const _Headline({required this.slide});
+
+  final OnboardingSlide slide;
+
+  @override
+  Widget build(BuildContext context) {
+    final base = Theme.of(context).textTheme.headlineSmall!.copyWith(
+          fontSize: 24,
+          fontWeight: FontWeight.w700,
+          height: 1.3,
+          letterSpacing: -0.2,
+        );
+
+    final highlight = slide.highlight;
+    final at = highlight == null || highlight.isEmpty
+        ? -1
+        : slide.title.indexOf(highlight);
+
+    return Text.rich(
+      at < 0
+          // No highlight, or the wording changed and it no longer matches:
+          // the line is simply drawn plain.
+          ? TextSpan(text: slide.title)
+          : TextSpan(
+              children: <TextSpan>[
+                TextSpan(text: slide.title.substring(0, at)),
+                TextSpan(
+                  text: highlight!,
+                  style: const TextStyle(color: _T.accent),
+                ),
+                TextSpan(text: slide.title.substring(at + highlight.length)),
+              ],
+            ),
+      style: base,
+      // Four lines is every headline with room to spare; the cap only stops
+      // a very narrow screen pushing words behind the button.
+      maxLines: 4,
+      overflow: TextOverflow.ellipsis,
     );
   }
 }
@@ -180,10 +253,10 @@ class _Header extends StatelessWidget {
           Row(
             mainAxisSize: MainAxisSize.min,
             children: <Widget>[
-              // The ring cut out of its dark square, so over a photo it
-              // reads as the mark rather than a black tile stuck on it.
+              // The app tile itself: its corners are transparent, so over
+              // a photo it reads as the mark, not a box stuck on it.
               Image.asset(
-                'assets/branding/app_icon_round.png',
+                'assets/branding/app_icon_mark.png',
                 width: 28,
                 height: 28,
                 fit: BoxFit.contain,
@@ -262,8 +335,10 @@ class _BottomBar extends StatelessWidget {
     required this.onGetStarted,
   });
 
-  /// Dots + gap + button + vertical padding, used to inset the headline above.
-  static const double height = 130;
+  /// Dots (10) + gap (24) + button (52) + bottom padding (24), used to inset
+  /// the headline above. Must match the layout below exactly: any slack
+  /// here is a gap between the headline and the dots.
+  static const double height = 110;
 
   final int pageCount;
   final int index;

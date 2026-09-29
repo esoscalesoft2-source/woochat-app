@@ -32,6 +32,14 @@ class Db {
 
   /// Written summaries of a conversation, one row each.
   static const String chatSummaries = 'chat_summaries';
+
+  /// Every stage move of a lead, written by a trigger on `leads`. Read-only
+  /// from the app — there is no insert policy.
+  static const String leadStageEvents = 'lead_stage_events';
+
+  /// The tenant's pipeline columns: a stage's stored `value` and the `label`
+  /// the board shows for it.
+  static const String leadPipelineStages = 'lead_pipeline_stages';
   static const String whatsappConnections = 'whatsapp_connections';
   static const String whatsappTemplates = 'whatsapp_templates';
 
@@ -63,6 +71,10 @@ class Db {
       'get_tenant_whatsapp_connection';
 
   static const String funnelChatIdsFn = 'funnel_chat_ids';
+
+  /// No arguments. `user_id` + `full_name` for everyone in the caller's
+  /// tenant, for putting a name to a user id in a history.
+  static const String listTenantMemberNamesFn = 'list_tenant_member_names';
   static const String funnelStartParam = 'p_start';
   static const String funnelEndParam = 'p_end';
 
@@ -86,6 +98,12 @@ class Db {
 
   /// Creates a template and submits it to Meta for every connected account.
   static const String whatsappTemplateFn = 'whatsapp-template';
+
+  /// WhatsApp calls: permission, start, hang up. Also Meta's calls webhook.
+  static const String callRouterFn = 'call-router';
+
+  /// One row per WhatsApp call, followed over Realtime while it rings.
+  static const String calls = 'calls';
 }
 
 /// `messages.direction` values.
@@ -154,4 +172,11 @@ enum AppRole {
         AppRole.moderator => 1,
         AppRole.user => 0,
       };
+}
+
+/// What the Settings page says about the build. Kept by hand beside
+/// `pubspec.yaml`'s `version:` — bump both together.
+class AppInfo {
+  const AppInfo._();
+  static const String version = '1.0.0';
 }

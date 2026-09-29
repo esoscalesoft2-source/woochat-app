@@ -165,6 +165,46 @@ class MessageAttachment {
   bool get isImage => type == 'image' || type == 'sticker';
   bool get isVideo => type == 'video';
   bool get isAudio => type == 'audio' || type == 'voice';
+  bool get isDocument => type == 'document';
+
+  /// The file's extension, lower-cased, from its name or failing that its
+  /// URL — '' when there is none.
+  String get extension {
+    for (final source in <String>[name, Uri.tryParse(url)?.path ?? '']) {
+      final dot = source.lastIndexOf('.');
+      if (dot > 0 && dot < source.length - 1) {
+        final ext = source.substring(dot + 1).toLowerCase();
+        if (RegExp(r'^[a-z0-9]{1,5}$').hasMatch(ext)) return ext;
+      }
+    }
+    return '';
+  }
+
+  /// A picture, whatever it was sent as: WhatsApp lets a photo go over as a
+  /// document, and it arrives typed "document" with a .jpg name.
+  bool get looksLikeImage =>
+      isImage ||
+      const <String>{'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'}
+          .contains(extension);
+
+  bool get isPdf => extension == 'pdf';
+
+  /// Something the app can show itself: a picture or a PDF.
+  bool get isViewableInApp => looksLikeImage || isPdf;
+
+  /// The same file, served as a download: Supabase storage turns a
+  /// `download=<name>` query into a `Content-Disposition: attachment`, so
+  /// the browser saves it under its own name instead of showing it.
+  Uri? get downloadUri {
+    final uri = Uri.tryParse(url);
+    if (uri == null) return null;
+    return uri.replace(
+      queryParameters: <String, String>{
+        ...uri.queryParameters,
+        'download': name.isEmpty ? 'file' : name,
+      },
+    );
+  }
 }
 
 extension _FirstOrNull<T> on Iterable<T> {

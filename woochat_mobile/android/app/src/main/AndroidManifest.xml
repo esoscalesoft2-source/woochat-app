@@ -3,6 +3,10 @@
     <uses-permission android:name="android.permission.INTERNET"/>
     <!-- Voice notes in the chat composer. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+    <!-- WhatsApp calls (WebRTC): route audio to earpiece/speaker/bluetooth. -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>
+    <uses-permission android:name="android.permission.BLUETOOTH"/>
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"/>
     <!-- Camera attachment. The feature is declared optional so the app still
          installs on a device without one. -->
     <uses-permission android:name="android.permission.CAMERA"/>
@@ -50,6 +54,11 @@
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
+        </intent>
+        <!-- The thread's 📞 opens the customer in WhatsApp (url_launcher). -->
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="https"/>
         </intent>
         <!-- image_picker needs to see a camera app to hand the capture to. -->
         <intent>

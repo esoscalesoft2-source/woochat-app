@@ -1,6 +1,7 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../core/constants.dart';
+import 'approved_templates_cache.dart';
 import 'edge_function_auth.dart';
 import 'supabase_client.dart';
 
@@ -61,6 +62,7 @@ class MessageTemplate {
     this.body,
     this.headerFormat,
     this.headerExampleUrl,
+    this.updatedAt,
   });
 
   final String id;
@@ -75,6 +77,10 @@ class MessageTemplate {
   /// actually receives, so the bubble embeds it too.
   final String? headerExampleUrl;
 
+  /// The row's `updated_at`, kept so the on-device copy can tell whether
+  /// the server's list has moved on without re-reading every body.
+  final String? updatedAt;
+
   factory MessageTemplate.fromMap(Map<String, dynamic> map) => MessageTemplate(
         id: map['id'].toString(),
         name: (map['name'] as String?)?.trim() ?? '',
@@ -82,7 +88,19 @@ class MessageTemplate {
         body: map['body_text'] as String? ?? map['body'] as String?,
         headerFormat: map['header_format'] as String?,
         headerExampleUrl: map['header_example_url'] as String?,
+        updatedAt: map['updated_at']?.toString(),
       );
+
+  /// The same keys [fromMap] reads, so a saved copy loads back unchanged.
+  Map<String, dynamic> toMap() => <String, dynamic>{
+        'id': id,
+        'name': name,
+        'language': language,
+        'body_text': body,
+        'header_format': headerFormat,
+        'header_example_url': headerExampleUrl,
+        'updated_at': updatedAt,
+      };
 
   static final RegExp _placeholder = RegExp(r'\{\{\s*(\d+)\s*\}\}');
 
@@ -120,10 +138,18 @@ class MessageTemplate {
 ///
 /// Only APPROVED templates can be sent, so only those are listed — the same
 /// filter the web app uses.
+///
+/// The approved list is read from the server once and kept on the device;
+/// see [ApprovedTemplatesCache] for when it is read again.
 class TemplatesRepository {
   const TemplatesRepository();
 
-  Future<List<MessageTemplate>> fetchApproved() async {
+  /// The approved templates, from the device's copy when there is one.
+  Future<List<MessageTemplate>> fetchApproved() =>
+      ApprovedTemplatesCache.instance.get();
+
+  /// Straight from the server, every column. The cache's own read.
+  static Future<List<MessageTemplate>> fetchApprovedFromServer() async {
     final rows = await db
         .from(Db.whatsappTemplates)
         .select()
@@ -135,6 +161,19 @@ class TemplatesRepository {
         .map(MessageTemplate.fromMap)
         .where((template) => template.name.isNotEmpty)
         .toList();
+  }
+
+  /// Just enough to tell whether the list has changed: ids and their
+  /// `updated_at`, a few bytes a row instead of every body.
+  static Future<String> fetchApprovedFingerprint() async {
+    final rows = await db
+        .from(Db.whatsappTemplates)
+        .select('id, updated_at')
+        .eq('status', 'APPROVED') as List<dynamic>;
+    return ApprovedTemplatesCache.fingerprintOf(<(String, String?)>[
+      for (final row in rows.whereType<Map<String, dynamic>>())
+        (row['id'].toString(), row['updated_at']?.toString()),
+    ]);
   }
 
   /// The team's saved parameter names, oldest first.

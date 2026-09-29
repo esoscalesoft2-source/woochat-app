@@ -102,7 +102,8 @@ void main() {
       expect(tester.takeException(), isNull);
       expect(find.text('GET STARTED'), findsOneWidget);
       expect(find.text('SKIP'), findsOneWidget);
-      // The posters carry their own headlines; the first is on screen.
+      // The first poster is on screen, with its headline drawn by the app
+      // below the artwork rather than printed across the top of it.
       expect(
         find.byWidgetPredicate((w) =>
             w is Image &&
@@ -111,6 +112,28 @@ void main() {
                 'assets/images/onboarding_1.jpg'),
         findsOneWidget,
       );
+      expect(
+        find.textContaining('No Ban Risk & Free Official Blue Tick'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('the headline sits just above the dots, not floating',
+        (tester) async {
+      // Tall window: a two-line headline anchored to the top of its room
+      // would leave a gap the size of two missing lines above the dots.
+      await pumpAt(tester, const OnboardingScreen(), const Size(500, 1000));
+
+      final headline = tester.getRect(
+        find.textContaining('No Ban Risk & Free Official Blue Tick'),
+      );
+      final dots = tester.getRect(find.bySemanticsLabel('Onboarding slides'));
+
+      final gap = dots.top - headline.bottom;
+      expect(gap, greaterThanOrEqualTo(16));
+      expect(gap, lessThanOrEqualTo(32), reason: 'headline floating above dots');
+      // And on the same left edge as the dots.
+      expect(headline.left, moreOrLessEquals(dots.left, epsilon: 1));
     });
 
     testWidgets('GET STARTED fires the finish action', (tester) async {

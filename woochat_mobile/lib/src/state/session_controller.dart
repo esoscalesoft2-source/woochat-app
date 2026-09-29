@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../data/approved_templates_cache.dart';
 import '../data/auth_repository.dart';
 import '../data/tenant_repository.dart';
 import '../models/tenant_context.dart';
@@ -147,6 +148,9 @@ class SessionController extends ChangeNotifier {
 
   Future<void> signOut() async {
     await _auth.signOut();
+    // The saved template list is this tenant's; the next sign-in may not
+    // be them.
+    unawaited(ApprovedTemplatesCache.instance.clear());
     // The auth stream drives the state change; this keeps the UI snappy when
     // the stream is slow to deliver.
     if (_status != SessionStatus.signedOut) {

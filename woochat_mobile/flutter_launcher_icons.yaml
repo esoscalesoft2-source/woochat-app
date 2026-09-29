@@ -5,9 +5,15 @@ flutter_launcher_icons:
   image_path: assets/branding/app_icon.png
   android: true
   ios: true
-  # iOS rejects alpha in the App Store icon; the source is opaque anyway.
+  # iOS rejects alpha in the App Store icon, and the tile's corners are
+  # transparent: they are filled with the tile's own green, and iOS then
+  # rounds the corners itself.
   remove_alpha_ios: true
-  adaptive_icon_background: "#2B0C00"
+  background_color_ios: "#003714"
+  # Flat: the tile's own green where a launcher mask cuts through it
+  # (measured by tool/make_app_icon.dart's sampling, see its comment).
+  # Never artwork — screens that draw the layers unmasked would show it.
+  adaptive_icon_background: "#00471B"
   adaptive_icon_foreground: assets/branding/app_icon_foreground.png
   web:
     generate: true
