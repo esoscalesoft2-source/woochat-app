@@ -4,14 +4,6 @@
 <dict>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
-	<key>NSCameraUsageDescription</key>
-	<string>Take a photo to send in a chat.</string>
-	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Choose a photo or video to send in a chat.</string>
-	<key>NSContactsUsageDescription</key>
-	<string>Share a contact card in a chat.</string>
-	<key>NSMicrophoneUsageDescription</key>
-	<string>Woo Chats needs the microphone to record voice notes you send in a chat.</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
@@ -34,6 +26,18 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<!-- HTTPS only, and Apple exempts that: without this key App Store
+	     Connect asks the export-compliance question on every upload. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<key>NSCameraUsageDescription</key>
+	<string>Take a photo to send in a chat.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>Share a contact card in a chat.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Woo Chats needs the microphone to record voice notes you send in a chat.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Choose a photo or video to send in a chat.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
