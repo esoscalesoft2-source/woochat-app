@@ -7,6 +7,7 @@ import 'package:intl/intl.dart';
 import '../../core/formatting.dart';
 import '../../core/constants.dart';
 import '../../data/chat_assignment_repository.dart';
+import '../../data/chat_attention_repository.dart';
 import '../../data/chat_filters_repository.dart';
 import '../../data/chat_tags_repository.dart';
 import '../../data/chats_repository.dart';
@@ -15,6 +16,7 @@ import '../../data/notes_repository.dart';
 import '../../data/schedules_repository.dart';
 import '../../data/team_repository.dart';
 import '../../models/chat.dart';
+import '../../models/chat_attention.dart';
 import '../../models/chat_filters.dart';
 import '../../models/tenant_context.dart';
 import '../../routing/app_router.dart';
@@ -27,6 +29,7 @@ import 'widgets/chat_notes_sheet.dart';
 import 'widgets/chat_row_menu.dart';
 import 'widgets/more_filters_sheet.dart';
 import 'widgets/new_chat_dialog.dart';
+import 'widgets/owner_view_pills.dart';
 import 'widgets/schedules_chip.dart';
 import 'widgets/selection_bar.dart';
 import 'widgets/users_filter.dart';
@@ -87,6 +90,13 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
 
   ScheduledChatIds _scheduled = ScheduledChatIds.empty;
 
+  /// All · Mine · Chatbot. Re-read every 30 seconds, as the web
+  /// app does, since a reply or an alert can land from anywhere.
+  final _attentionRepository = const ChatAttentionRepository();
+  ChatAttention _attention = ChatAttention.empty;
+  OwnerView _ownerView = OwnerView.all;
+  Timer? _attentionPoll;
+
   /// Null while the Schedules filter is off.
   ScheduleBucket? _scheduleBucket;
   Timer? _schedulePoll;
@@ -111,6 +121,11 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
     _loadFilterData();
     _loadTeam();
     _loadTeamUsers();
+    _loadAttention();
+    _attentionPoll = Timer.periodic(
+      const Duration(seconds: 30),
+      (_) => _loadAttention(),
+    );
     // Re-poll so the pending pulse clears once the last send goes out.
     _schedulePoll = Timer.periodic(
       const Duration(seconds: 60),
@@ -121,6 +136,7 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
   @override
   void dispose() {
     _schedulePoll?.cancel();
+    _attentionPoll?.cancel();
     _searchController.dispose();
     super.dispose();
   }
@@ -133,6 +149,20 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
       // The chat list must keep working even if this RPC is unavailable.
     }
   }
+
+  Future<void> _loadAttention() async {
+    try {
+      final attention = await _attentionRepository.load(
+        widget.tenantContext.authUserId,
+      );
+      if (mounted) setState(() => _attention = attention);
+    } catch (_) {
+      // Keep the last read; the pills simply lag until the next poll.
+    }
+  }
+
+  bool _needsYou(Chat chat) =>
+      _attention.needsMe(chat, widget.tenantContext.authUserId);
 
   Future<void> _loadFilterData() async {
     try {
@@ -380,11 +410,16 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
       context,
       chat: chat,
       canMarkUnread: _canMarkUnread,
+      needsYou: _needsYou(chat),
     );
     if (action == null || !mounted) return;
 
     try {
       switch (action) {
+        case ChatRowAction.checked:
+          await _attentionRepository.markChecked(chat.id);
+          _notify("Marked as checked — it's out of Mine");
+          await _loadAttention();
         case ChatRowAction.archive:
           await _repository.setArchived(chat.id, !chat.isArchived);
         case ChatRowAction.pin:
@@ -659,6 +694,7 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
     });
     _loadScheduled();
     _loadFilterData();
+    _loadAttention();
   }
 
   void _openChat(Chat chat) {
@@ -785,7 +821,7 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
 
             // Schedules is its own axis: while it is on it replaces the tab and
             // dropdown selection rather than stacking with them.
-            final visible = applyUsersFilter(
+            final beforeOwnerView = applyUsersFilter(
               ChatFilterEngine.apply(
                 chats: scoped,
                 data: _filterData,
@@ -797,6 +833,21 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
               authUserId: widget.tenantContext.authUserId,
               isSuperAdmin: _isSuperAdmin,
             );
+
+            // All · Mine · Chatbot, applied last and counted off
+            // the same list, so a pill never promises more rows than it opens.
+            final authUserId = widget.tenantContext.authUserId;
+            int ownerCount(OwnerView view) => beforeOwnerView
+                .where((chat) => _attention.matches(view, chat, authUserId))
+                .length;
+            final visible = _ownerView == OwnerView.all
+                ? beforeOwnerView
+                : beforeOwnerView
+                      .where(
+                        (chat) =>
+                            _attention.matches(_ownerView, chat, authUserId),
+                      )
+                      .toList();
 
             int tabCount(ContactTab tab) => ChatFilterEngine.count(
               chats: scoped,
@@ -838,6 +889,13 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
                       await _reloadFunnel();
                     },
                     filters: _filters,
+                    ownerView: _ownerView,
+                    ownerCounts: <OwnerView, int>{
+                      OwnerView.mine: ownerCount(OwnerView.mine),
+                      OwnerView.bot: ownerCount(OwnerView.bot),
+                    },
+                    onOwnerViewChanged: (view) =>
+                        setState(() => _ownerView = view),
                     scheduling: bucket != null,
                     allCount: tabCount(ContactTab.all),
                     unreadCount: tabCount(ContactTab.unread),
@@ -928,6 +986,7 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
         query: _query,
         range: _range,
         scheduleBucket: _scheduleBucket,
+        ownerView: _ownerView,
         onClearFilters: _filters.isNarrowed
             ? () => setState(() => _filters = _filters.clearAll())
             : null,
@@ -964,6 +1023,7 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
           noteExcerpt: noteExcerpt(_filterData.latestNoteFor(phone)?.text),
           selecting: _selecting,
           selected: _selected.contains(chat.id),
+          needsYou: _needsYou(chat),
           // In select mode a tap picks; otherwise it opens. A long press
           // starts selecting from that chat — the row menu now lives behind
           // the ⋮ in the selection bar.
@@ -988,6 +1048,9 @@ class _Header extends StatelessWidget {
     required this.onPickRange,
     required this.onClearRange,
     required this.filters,
+    required this.ownerView,
+    required this.ownerCounts,
+    required this.onOwnerViewChanged,
     required this.scheduling,
     required this.allCount,
     required this.unreadCount,
@@ -1012,6 +1075,11 @@ class _Header extends StatelessWidget {
   final VoidCallback onPickRange;
   final VoidCallback onClearRange;
   final ChatFilterState filters;
+  final OwnerView ownerView;
+
+  /// Rows behind Mine and Chatbot. All carries no count.
+  final Map<OwnerView, int> ownerCounts;
+  final ValueChanged<OwnerView> onOwnerViewChanged;
   final bool scheduling;
   final int allCount;
   final int unreadCount;
@@ -1097,6 +1165,17 @@ class _Header extends StatelessWidget {
                 onChanged: onQueryChanged,
                 rangeActive: range != null,
                 onPickRange: onPickRange,
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: OwnerViewPills(
+                  view: ownerView,
+                  counts: ownerCounts,
+                  onChanged: onOwnerViewChanged,
+                ),
               ),
             ),
             SizedBox(
@@ -1426,6 +1505,7 @@ class _EmptyChats extends StatelessWidget {
     required this.query,
     required this.range,
     required this.scheduleBucket,
+    required this.ownerView,
     required this.onClearFilters,
   });
 
@@ -1433,6 +1513,7 @@ class _EmptyChats extends StatelessWidget {
   final String query;
   final DateTimeRange? range;
   final ScheduleBucket? scheduleBucket;
+  final OwnerView ownerView;
   final VoidCallback? onClearFilters;
 
   @override
@@ -1445,6 +1526,15 @@ class _EmptyChats extends StatelessWidget {
       _ when scheduleBucket != null => (
         'No failed sends',
         'Scheduled sends that failed show here.',
+      ),
+      _ when ownerView == OwnerView.mine => (
+        'Nothing waiting on you',
+        'Chats you got an alert for, or that were passed to you, show here '
+            'until someone replies.',
+      ),
+      _ when ownerView == OwnerView.bot => (
+        'No chats with the AI',
+        'Chats the AI is answering show here.',
       ),
       _ when query.trim().isNotEmpty => (
         'No matches',

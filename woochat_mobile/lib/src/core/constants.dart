@@ -104,6 +104,19 @@ class Db {
 
   /// One row per WhatsApp call, followed over Realtime while it rings.
   static const String calls = 'calls';
+
+  // Behind the All · Mine · Chatbot pills.
+
+  /// An alert a team member got about a chat.
+  static const String chatAlerts = 'chat_alerts';
+
+  /// Chats the Sales Agent (AI) holds; `handed_over_at` set when it passed
+  /// one to the team.
+  static const String salesAgentChats = 'sales_agent_chats';
+
+  /// `p_chat_id`. Sets `chats.attention_cleared_at`, which takes the chat out
+  /// of Mine the way a reply does.
+  static const String chatCheckedByTeamFn = 'chat_checked_by_team';
 }
 
 /// `messages.direction` values.

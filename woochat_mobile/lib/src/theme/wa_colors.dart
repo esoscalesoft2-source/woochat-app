@@ -116,6 +116,11 @@ class Wa {
   /// Tint behind a row picked in select mode. Web `#12463a`.
   static const Color rowSelected = Color(0xFF12463A);
 
+  /// The Mine pill, and the tint behind a chat waiting on this person.
+  /// Web `rose-500` and `rose-950/40`.
+  static const Color mine = Color(0xFFF43F5E);
+  static const Color rowMine = Color(0x664C0519);
+
   // ---- Names kept for existing call sites ------------------------------
   //
   // These are aliases onto the palette above, not extra colours.

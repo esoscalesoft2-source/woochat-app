@@ -39,6 +39,7 @@ class ChatListTile extends StatelessWidget {
     this.noteExcerpt,
     this.selecting = false,
     this.selected = false,
+    this.needsYou = false,
   });
 
   final Chat chat;
@@ -69,6 +70,10 @@ class ChatListTile extends StatelessWidget {
   final bool selecting;
   final bool selected;
 
+  /// In Mine: waiting on this person, so the row is tinted rose until
+  /// someone replies or marks it checked.
+  final bool needsYou;
+
   @override
   Widget build(BuildContext context) {
     final hasUnread = chat.unreadCount > 0 || chat.isUnread;
@@ -82,7 +87,9 @@ class ChatListTile extends StatelessWidget {
     return Material(
       color: selected
           ? Wa.rowSelected
-          : hasUnread
+          : needsYou
+              ? Wa.rowMine
+              : hasUnread
               ? Wa.rowUnread
               : Colors.transparent,
       child: InkWell(

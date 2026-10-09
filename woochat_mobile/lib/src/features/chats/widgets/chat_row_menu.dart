@@ -4,7 +4,16 @@ import '../../../models/chat.dart';
 import '../../../theme/wa_colors.dart';
 
 /// What the row menu can do — the same set as the web sidebar's ⌄ dropdown.
-enum ChatRowAction { archive, pin, unread, labels, categories, notes, products }
+enum ChatRowAction {
+  checked,
+  archive,
+  pin,
+  unread,
+  labels,
+  categories,
+  notes,
+  products,
+}
 
 /// The long-press menu on a chat row. Mobile has no hover, so the web's
 /// hidden ⌄ button becomes a bottom sheet.
@@ -12,10 +21,14 @@ enum ChatRowAction { archive, pin, unread, labels, categories, notes, products }
 /// Clearing unread is open to everyone; setting a chat back to unread is
 /// gated by [canMarkUnread], which admins always hold and staff only when
 /// their admin has delegated it.
+///
+/// [needsYou] adds the web's "Checked" at the top, for a chat in Mine with
+/// nothing to reply.
 Future<ChatRowAction?> showChatRowMenu(
   BuildContext context, {
   required Chat chat,
   required bool canMarkUnread,
+  bool needsYou = false,
 }) {
   return showModalBottomSheet<ChatRowAction>(
     context: context,
@@ -26,16 +39,24 @@ Future<ChatRowAction?> showChatRowMenu(
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
     ),
-    builder: (context) =>
-        _ChatRowMenu(chat: chat, canMarkUnread: canMarkUnread),
+    builder: (context) => _ChatRowMenu(
+      chat: chat,
+      canMarkUnread: canMarkUnread,
+      needsYou: needsYou,
+    ),
   );
 }
 
 class _ChatRowMenu extends StatelessWidget {
-  const _ChatRowMenu({required this.chat, required this.canMarkUnread});
+  const _ChatRowMenu({
+    required this.chat,
+    required this.canMarkUnread,
+    required this.needsYou,
+  });
 
   final Chat chat;
   final bool canMarkUnread;
+  final bool needsYou;
 
   @override
   Widget build(BuildContext context) {
@@ -66,6 +87,14 @@ class _ChatRowMenu extends StatelessWidget {
                   ),
                 ),
               ),
+              if (needsYou) ...<Widget>[
+                const _Item(
+                  icon: Icons.done_all,
+                  label: 'Checked — nothing to reply',
+                  action: ChatRowAction.checked,
+                ),
+                const Divider(height: 8, color: Wa.divider),
+              ],
               _Item(
                 icon: Icons.archive_outlined,
                 label: chat.isArchived ? 'Unarchive' : 'Archive chat',
