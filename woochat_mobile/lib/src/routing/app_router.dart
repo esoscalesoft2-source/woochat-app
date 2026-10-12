@@ -1,9 +1,12 @@
+import 'package:flutter/cupertino.dart' show CupertinoPageTransition;
+import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../features/auth/create_admin_screen.dart';
 import '../features/auth/login_screen.dart';
 import '../features/auth/workspace_error_screen.dart';
 import '../features/chat/chat_route.dart';
+import '../features/chat/widgets/edge_swipe_back.dart';
 import '../features/chats/chats_route.dart';
 import '../features/onboarding/onboarding_screen.dart';
 import '../models/chat.dart';
@@ -80,12 +83,54 @@ GoRouter createRouter(SessionController session) {
         routes: <RouteBase>[
           GoRoute(
             path: ':chatId',
-            builder: (context, state) => ChatRoute(
-              chatId: state.pathParameters['chatId']!,
-              // Passed along when opening from the list so the conversation
-              // renders instantly; a deep link has no extra and refetches.
-              initialChat: state.extra is Chat ? state.extra! as Chat : null,
-            ),
+            // The page is built by hand: go_router 18 looks for material_ui's
+            // MaterialApp, not the one this app uses, so a plain `builder`
+            // falls back to a NoTransitionPage — no slide in, no way back
+            // but the arrow.
+            pageBuilder: (context, state) {
+              final child = ChatRoute(
+                chatId: state.pathParameters['chatId']!,
+                // Passed along when opening from the list so the conversation
+                // renders instantly; a deep link has no extra and refetches.
+                initialChat: state.extra is Chat ? state.extra! as Chat : null,
+              );
+              final arguments = <String, String>{
+                ...state.pathParameters,
+                ...state.uri.queryParameters,
+              };
+
+              // Android: the system draws the ← bubble for its back gesture,
+              // and MaterialPage pops on it.
+              if (Theme.of(context).platform != TargetPlatform.iOS) {
+                return MaterialPage<void>(
+                  key: state.pageKey,
+                  name: state.name ?? state.path,
+                  arguments: arguments,
+                  restorationId: state.pageKey.value,
+                  child: child,
+                );
+              }
+
+              // iOS: the same slide in and out, but back is WhatsApp's edge
+              // bubble rather than dragging the page — the two would fight
+              // over the same edge.
+              return CustomTransitionPage<void>(
+                key: state.pageKey,
+                name: state.name ?? state.path,
+                arguments: arguments,
+                restorationId: state.pageKey.value,
+                transitionDuration: const Duration(milliseconds: 400),
+                reverseTransitionDuration: const Duration(milliseconds: 400),
+                transitionsBuilder: (context, animation, secondary, child) =>
+                    CupertinoPageTransition(
+                      primaryRouteAnimation: animation,
+                      secondaryRouteAnimation: secondary,
+                      linearTransition: false,
+                      child: child,
+                    ),
+                child: EdgeSwipeBack(child: child),
+              );
+            },
           ),
         ],
       ),
