@@ -54,6 +54,9 @@ void main() {
     expect(find.text('Admin'), findsOneWidget);
     expect(find.byKey(const ValueKey<String>('settings-storage')), findsOneWidget);
     expect(find.byKey(const ValueKey<String>('settings-sign-out')), findsOneWidget);
+    // Play and the App Store ask for both from inside the app.
+    expect(find.text('Privacy policy'), findsOneWidget);
+    expect(find.text('Delete account'), findsOneWidget);
     // The earlier sections are gone.
     expect(find.text('Your workspace'), findsNothing);
     expect(find.text('Reload templates'), findsNothing);

@@ -119,6 +119,18 @@ class Db {
   static const String chatCheckedByTeamFn = 'chat_checked_by_team';
 }
 
+/// The public pages on the web app that Google Play and the App Store ask the
+/// app itself to link to.
+class LegalUrls {
+  const LegalUrls._();
+  static const String privacy = 'https://woochat.esowolf.in/privacy';
+
+  /// How to delete an account and what goes — required in-app for any app
+  /// that lets people sign up.
+  static const String deleteAccount =
+      'https://woochat.esowolf.in/delete-account';
+}
+
 /// `messages.direction` values.
 class MessageDirection {
   const MessageDirection._();
@@ -172,19 +184,19 @@ enum AppRole {
   }
 
   String get label => switch (this) {
-        AppRole.superAdmin => 'Super Admin',
-        AppRole.admin => 'Admin',
-        AppRole.moderator => 'Moderator',
-        AppRole.user => 'User',
-      };
+    AppRole.superAdmin => 'Super Admin',
+    AppRole.admin => 'Admin',
+    AppRole.moderator => 'Moderator',
+    AppRole.user => 'User',
+  };
 
   /// Rank used when a user holds more than one row in `user_roles`.
   int get rank => switch (this) {
-        AppRole.superAdmin => 3,
-        AppRole.admin => 2,
-        AppRole.moderator => 1,
-        AppRole.user => 0,
-      };
+    AppRole.superAdmin => 3,
+    AppRole.admin => 2,
+    AppRole.moderator => 1,
+    AppRole.user => 0,
+  };
 }
 
 /// What the Settings page says about the build. Kept by hand beside
