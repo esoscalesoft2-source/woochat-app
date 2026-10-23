@@ -53,6 +53,8 @@ GoRouter createRouter(SessionController session) {
           return atError ? null : Routes.noWorkspace;
 
         case SessionStatus.ready:
+          // Adding another account: the login screen, on top of this one.
+          if (session.addingAccount) return atLogin ? null : Routes.login;
           // Signed in: the auth screens are no longer reachable.
           return (atWelcome || atLogin || atSignup || atError)
               ? Routes.chats
@@ -66,8 +68,10 @@ GoRouter createRouter(SessionController session) {
       ),
       GoRoute(
         path: Routes.login,
-        builder: (context, state) =>
-            LoginScreen(notice: session.takeSignOutNotice()),
+        builder: (context, state) => LoginScreen(
+          notice: session.takeSignOutNotice(),
+          onCancel: session.addingAccount ? session.cancelAddAccount : null,
+        ),
       ),
       GoRoute(
         path: Routes.signup,

@@ -33,11 +33,15 @@ class _T {
 ///
 /// Creating an account lives on its own screen at /signup.
 class LoginScreen extends StatefulWidget {
-  const LoginScreen({super.key, this.notice});
+  const LoginScreen({super.key, this.notice, this.onCancel});
 
   /// Why the user is here without having tapped Sign out — shown once above
   /// the form so an expired session reads as that, not as a bug.
   final String? notice;
+
+  /// Set when another account is being added: the way back to the one in
+  /// use, shown as a close button.
+  final VoidCallback? onCancel;
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
@@ -174,6 +178,18 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
             ),
           ),
+          if (widget.onCancel != null)
+            SafeArea(
+              child: Align(
+                alignment: Alignment.topLeft,
+                child: IconButton(
+                  key: const ValueKey<String>('login-cancel-add-account'),
+                  tooltip: 'Back to your account',
+                  icon: const Icon(Icons.close, color: Colors.white),
+                  onPressed: widget.onCancel,
+                ),
+              ),
+            ),
         ],
       ),
     );

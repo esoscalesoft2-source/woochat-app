@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../data/account_store.dart';
 import '../data/approved_templates_cache.dart';
 import '../data/auth_repository.dart';
 import '../data/tenant_repository.dart';
@@ -41,11 +42,27 @@ class SessionController extends ChangeNotifier {
   SessionController({
     AuthRepository? auth,
     TenantRepository? tenants,
-  })  : _auth = auth ?? const AuthRepository(),
-        _tenants = tenants ?? const TenantRepository();
+    AccountStore? accounts,
+  }) : _auth = auth ?? const AuthRepository(),
+       _tenants = tenants ?? const TenantRepository(),
+       _accounts = accounts ?? AccountStore.instance;
 
   final AuthRepository _auth;
   final TenantRepository _tenants;
+  final AccountStore _accounts;
+
+  /// Every account signed in on this phone, the one in use among them.
+  List<SavedAccount> _saved = const <SavedAccount>[];
+  List<SavedAccount> get savedAccounts => _saved;
+
+  /// True while the login screen is open to add another account; the
+  /// router lets a signed-in user see it only then.
+  bool _addingAccount = false;
+  bool get addingAccount => _addingAccount;
+
+  /// Set while one account signs out and the next takes over, so the gap
+  /// between them shows a loader instead of the login screen.
+  bool _handingOver = false;
 
   StreamSubscription<AuthState>? _subscription;
   String? _userId;
@@ -89,6 +106,7 @@ class SessionController extends ChangeNotifier {
 
     final session = _auth.currentSession;
     _userId = session?.user.id;
+    unawaited(_remember(session));
     if (session == null) {
       _set(SessionStatus.signedOut);
     } else {
@@ -99,20 +117,55 @@ class SessionController extends ChangeNotifier {
   void _onAuthState(AuthState state) {
     if (!shouldApplyAuthEvent(state.event, state.session)) return;
 
+    // Every token event: keep this account's latest refresh token, so a
+    // switch back to it later still works.
+    unawaited(_remember(state.session));
+
+    // Signing in to the account already in use, from Add account.
+    if (_addingAccount && state.event == AuthChangeEvent.signedIn) {
+      _addingAccount = false;
+      notifyListeners();
+    }
+
     final userId = state.session?.user.id;
     // Ignore token refreshes for the same user.
     if (userId == _userId && _status != SessionStatus.unknown) return;
     _userId = userId;
 
+    // A different account: drop the old tenant at once, so no screen keeps
+    // showing the last workspace while the new one resolves.
+    _tenantContext = null;
+    _error = null;
+
     if (userId == null) {
-      _tenantContext = null;
-      _error = null;
+      if (_handingOver) {
+        _set(SessionStatus.resolving);
+        return;
+      }
       _signOutNotice = _noticeFor(state.signOutReason);
       _set(SessionStatus.signedOut);
     } else {
       _signOutNotice = null;
       unawaited(_resolveTenant());
     }
+  }
+
+  /// Saves [session]'s account and latest refresh token, then reloads the
+  /// list the switcher shows.
+  Future<void> _remember(Session? session, {String? roleLabel}) async {
+    if (session != null) {
+      final token = session.refreshToken;
+      if (token != null && token.isNotEmpty) {
+        await _accounts.upsert(
+          userId: session.user.id,
+          refreshToken: token,
+          email: session.user.email,
+          roleLabel: roleLabel,
+        );
+      }
+    }
+    _saved = await _accounts.all();
+    notifyListeners();
   }
 
   /// What to tell the user about a sign-out they did not ask for.
@@ -133,6 +186,9 @@ class SessionController extends ChangeNotifier {
 
     try {
       _tenantContext = await _tenants.resolveForCurrentUser();
+      unawaited(
+        _remember(_auth.currentSession, roleLabel: _tenantContext?.role.label),
+      );
       _set(SessionStatus.ready);
     } on TenantResolutionException catch (error) {
       _error = error.message;
@@ -146,11 +202,83 @@ class SessionController extends ChangeNotifier {
   /// Retries tenant resolution after a failure.
   Future<void> retry() => _resolveTenant();
 
+  // ---- Accounts on this phone ---------------------------------------------
+
+  /// Opens the login screen to sign in to one more account.
+  void beginAddAccount() {
+    _addingAccount = true;
+    notifyListeners();
+  }
+
+  /// Back from the login screen without adding one.
+  void cancelAddAccount() {
+    if (!_addingAccount) return;
+    _addingAccount = false;
+    notifyListeners();
+  }
+
+  /// Makes a saved account the one in use. Throws when its sign-in has
+  /// lapsed; that account is then forgotten, and the user adds it again.
+  Future<void> switchTo(String userId) async {
+    if (userId == _userId) return;
+    final account = await _accounts.find(userId);
+    if (account == null) return;
+    _clearTenantCaches();
+    try {
+      await _auth.switchTo(account.refreshToken);
+    } on AuthException {
+      await _accounts.remove(userId);
+      _saved = await _accounts.all();
+      notifyListeners();
+      throw const SessionSwitchException(
+        'That account\'s sign-in has expired. Add it again with its password.',
+      );
+    }
+  }
+
+  /// Signs out a saved account that is not in use. The one in use goes
+  /// through [signOut].
+  Future<void> forget(String userId) async {
+    if (userId == _userId) return signOut();
+    final account = await _accounts.find(userId);
+    await _accounts.remove(userId);
+    _saved = await _accounts.all();
+    notifyListeners();
+    if (account != null) unawaited(_auth.revoke(account.refreshToken));
+  }
+
+  /// Per-tenant data kept on the phone; the next account may not share it.
+  void _clearTenantCaches() {
+    unawaited(ApprovedTemplatesCache.instance.clear());
+  }
+
+  /// Signs out the account in use. Another account signed in on this phone
+  /// takes over; with none, the login screen.
   Future<void> signOut() async {
+    final leaving = _userId;
+    if (leaving != null) await _accounts.remove(leaving);
+    final next = (await _accounts.all()).firstOrNull;
+    if (next != null) {
+      _handingOver = true;
+      try {
+        await _auth.signOut();
+        _clearTenantCaches();
+        await _auth.switchTo(next.refreshToken);
+        return;
+      } on AuthException {
+        await _accounts.remove(next.userId);
+      } finally {
+        _handingOver = false;
+        _saved = await _accounts.all();
+        notifyListeners();
+      }
+    }
+
     await _auth.signOut();
+    _saved = await _accounts.all();
     // The saved template list is this tenant's; the next sign-in may not
     // be them.
-    unawaited(ApprovedTemplatesCache.instance.clear());
+    _clearTenantCaches();
     // The auth stream drives the state change; this keeps the UI snappy when
     // the stream is slow to deliver.
     if (_status != SessionStatus.signedOut) {
@@ -163,6 +291,7 @@ class SessionController extends ChangeNotifier {
   }
 
   void _set(SessionStatus status) {
+    if (status == SessionStatus.signedOut) _addingAccount = false;
     if (_status == status) {
       notifyListeners();
       return;
@@ -176,4 +305,12 @@ class SessionController extends ChangeNotifier {
     _subscription?.cancel();
     super.dispose();
   }
+}
+
+/// A saved account could not be switched to.
+class SessionSwitchException implements Exception {
+  const SessionSwitchException(this.message);
+  final String message;
+  @override
+  String toString() => message;
 }

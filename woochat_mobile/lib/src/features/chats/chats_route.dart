@@ -31,7 +31,10 @@ class ChatsRoute extends StatelessWidget {
     // The watcher sits here, under every signed-in screen: a customer's
     // call rings on top of whatever is open, an individual chat included,
     // since those routes stack on this one's navigator.
+    // Keyed by account: switching accounts builds every screen afresh, so no
+    // list, stream or filter carries over from the last workspace.
     return IncomingCallWatcher(
+      key: ValueKey<String>(tenantContext.authUserId),
       tenantContext: tenantContext,
       child: HomeShell(
         tenantContext: tenantContext,

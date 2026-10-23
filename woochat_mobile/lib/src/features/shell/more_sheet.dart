@@ -1,10 +1,15 @@
 import 'package:flutter/material.dart';
 
+import '../../data/account_store.dart';
 import '../../models/tenant_context.dart';
+import '../../state/session_controller.dart';
+import '../../state/session_scope.dart';
 import '../../theme/wa_colors.dart';
 import '../chat/widgets/confirm_dialog.dart';
+import '../monitor/chat_monitor_screen.dart';
 
-/// What the nav bar's More tab opens: who is signed in, and Sign out.
+/// What the nav bar's More tab opens: who is signed in — tap it for every
+/// account on this phone, to switch or add one — Chat Monitor, and Sign out.
 ///
 /// Sign out asks first — on a phone it is one thumb-slip from Contacts, and
 /// getting back in means the password again.
@@ -13,79 +18,288 @@ Future<void> showMoreSheet(
   required TenantContext tenantContext,
   required Future<void> Function() onSignOut,
 }) {
-  return showModalBottomSheet<void>(
+  final session = SessionScope.of(context);
+  return showModalBottomSheet<_After>(
     context: context,
     backgroundColor: Wa.sheet,
     showDragHandle: true,
+    isScrollControlled: true,
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
     ),
-    builder: (context) => SafeArea(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: <Widget>[
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
-            child: Row(
-              children: <Widget>[
-                const CircleAvatar(
-                  radius: 22,
-                  backgroundColor: Wa.input,
-                  child: Icon(Icons.person, color: Wa.icon),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+    builder: (sheetContext) => _MoreSheet(
+      session: session,
+      tenantContext: tenantContext,
+      onSignOut: onSignOut,
+      // The page and the messages open over the shell, not the sheet.
+      shellContext: context,
+    ),
+  ).then((after) {
+    // Only once the sheet is gone: the router moves to the login screen, and
+    // a sheet still closing would be left stranded under it.
+    if (after == _After.addAccount) session.beginAddAccount();
+  });
+}
+
+/// What to do once the sheet has closed.
+enum _After { addAccount }
+
+class _MoreSheet extends StatefulWidget {
+  const _MoreSheet({
+    required this.session,
+    required this.tenantContext,
+    required this.onSignOut,
+    required this.shellContext,
+  });
+
+  final SessionController session;
+  final TenantContext tenantContext;
+  final Future<void> Function() onSignOut;
+  final BuildContext shellContext;
+
+  @override
+  State<_MoreSheet> createState() => _MoreSheetState();
+}
+
+class _MoreSheetState extends State<_MoreSheet> {
+  /// The accounts list opens from the card, as in Gmail.
+  bool _accountsOpen = false;
+
+  String get _me => widget.tenantContext.authUserId;
+
+  List<SavedAccount> get _others =>
+      widget.session.savedAccounts.where((a) => a.userId != _me).toList();
+
+  void _notify(String message) {
+    final context = widget.shellContext;
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _switchTo(SavedAccount account) async {
+    Navigator.of(context).pop();
+    try {
+      await widget.session.switchTo(account.userId);
+    } on SessionSwitchException catch (error) {
+      _notify(error.message);
+    } catch (error) {
+      _notify('Could not switch accounts: $error');
+    }
+  }
+
+  void _addAccount() => Navigator.of(context).pop(_After.addAccount);
+
+  Future<void> _forget(SavedAccount account) async {
+    final sure = await showConfirmDialog(
+      context,
+      title: 'Sign out ${account.email}?',
+      message:
+          'It leaves this phone. You will need its password to add it again.',
+      confirmLabel: 'Sign out',
+    );
+    if (!sure || !mounted) return;
+    await widget.session.forget(account.userId);
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _signOut() async {
+    final next = _others.firstOrNull;
+    final sure = await showConfirmDialog(
+      context,
+      title: 'Sign out?',
+      message: next == null
+          ? 'You will need your password to sign in again.'
+          : 'You will need your password to sign in again. '
+                '${next.email} takes over on this phone.',
+      confirmLabel: 'Sign out',
+    );
+    if (!sure || !mounted) return;
+    Navigator.of(context).pop();
+    await widget.onSignOut();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final others = _others;
+    final role = widget.tenantContext.role.label;
+    return SafeArea(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.sizeOf(context).height * 0.85,
+        ),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              InkWell(
+                key: const ValueKey<String>('more-account-card'),
+                onTap: () => setState(() => _accountsOpen = !_accountsOpen),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 4, 12, 12),
+                  child: Row(
                     children: <Widget>[
-                      Text(
-                        tenantContext.email ?? 'Signed in',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Wa.title,
-                          fontSize: 15,
-                          fontWeight: FontWeight.w600,
+                      _Avatar(email: widget.tenantContext.email, active: true),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: _AccountText(
+                          email: widget.tenantContext.email ?? 'Signed in',
+                          detail: others.isEmpty
+                              ? role
+                              : '$role · ${others.length + 1} accounts',
+                          bold: true,
                         ),
                       ),
-                      const SizedBox(height: 2),
-                      Text(
-                        tenantContext.role.label,
-                        style: const TextStyle(
-                          color: Wa.secondaryText,
-                          fontSize: 13,
-                        ),
+                      Icon(
+                        _accountsOpen
+                            ? Icons.keyboard_arrow_up
+                            : Icons.keyboard_arrow_down,
+                        color: Wa.icon,
                       ),
                     ],
                   ),
                 ),
+              ),
+              if (_accountsOpen) ...<Widget>[
+                for (final account in others)
+                  ListTile(
+                    key: ValueKey<String>('more-account-${account.userId}'),
+                    contentPadding: const EdgeInsets.fromLTRB(20, 0, 8, 0),
+                    leading: _Avatar(email: account.email),
+                    title: _AccountText(
+                      email: account.email,
+                      detail: account.roleLabel ?? 'Tap to switch',
+                    ),
+                    trailing: IconButton(
+                      tooltip: 'Sign out ${account.email}',
+                      icon: const Icon(Icons.logout, size: 20, color: Wa.icon),
+                      onPressed: () => _forget(account),
+                    ),
+                    onTap: () => _switchTo(account),
+                  ),
+                ListTile(
+                  key: const ValueKey<String>('more-add-account'),
+                  contentPadding: const EdgeInsets.fromLTRB(20, 0, 8, 0),
+                  leading: const CircleAvatar(
+                    radius: 22,
+                    backgroundColor: Wa.input,
+                    child: Icon(Icons.person_add_alt_1, color: Wa.accent),
+                  ),
+                  title: const Text(
+                    'Add account',
+                    style: TextStyle(color: Wa.title, fontSize: 15),
+                  ),
+                  subtitle: const Text(
+                    'Sign in to another WooChat account',
+                    style: TextStyle(color: Wa.secondaryText, fontSize: 12.5),
+                  ),
+                  onTap: _addAccount,
+                ),
+                const SizedBox(height: 4),
               ],
-            ),
+              const Divider(height: 1, color: Wa.divider),
+              ListTile(
+                key: const ValueKey<String>('more-chat-monitor'),
+                leading: const Icon(
+                  Icons.monitor_heart_outlined,
+                  color: Wa.icon,
+                ),
+                title: const Text(
+                  'Chat Monitor',
+                  style: TextStyle(color: Wa.title, fontSize: 15),
+                ),
+                subtitle: const Text(
+                  'Issues to fix, and how each chat is going',
+                  style: TextStyle(color: Wa.secondaryText, fontSize: 12.5),
+                ),
+                trailing: const Icon(Icons.chevron_right, color: Wa.icon),
+                onTap: () {
+                  // Close the sheet, then open the page over the shell.
+                  Navigator.of(context).pop();
+                  showChatMonitorScreen(
+                    widget.shellContext,
+                    tenantContext: widget.tenantContext,
+                  );
+                },
+              ),
+              const Divider(height: 1, color: Wa.divider),
+              ListTile(
+                key: const ValueKey<String>('more-sign-out'),
+                leading: const Icon(Icons.logout, color: Wa.error),
+                title: const Text(
+                  'Sign out',
+                  style: TextStyle(color: Wa.title, fontSize: 15),
+                ),
+                onTap: _signOut,
+              ),
+              const SizedBox(height: 8),
+            ],
           ),
-          const Divider(height: 1, color: Wa.divider),
-          ListTile(
-            key: const ValueKey<String>('more-sign-out'),
-            leading: const Icon(Icons.logout, color: Wa.error),
-            title: const Text(
-              'Sign out',
-              style: TextStyle(color: Wa.title, fontSize: 15),
-            ),
-            onTap: () async {
-              final sure = await showConfirmDialog(
-                context,
-                title: 'Sign out?',
-                message: 'You will need your password to sign in again.',
-                confirmLabel: 'Sign out',
-              );
-              if (!sure || !context.mounted) return;
-              Navigator.of(context).pop();
-              await onSignOut();
-            },
-          ),
-          const SizedBox(height: 8),
-        ],
+        ),
       ),
-    ),
+    );
+  }
+}
+
+class _Avatar extends StatelessWidget {
+  const _Avatar({required this.email, this.active = false});
+
+  final String? email;
+  final bool active;
+
+  @override
+  Widget build(BuildContext context) {
+    final trimmed = (email ?? '').trim();
+    return CircleAvatar(
+      radius: 22,
+      backgroundColor: active ? Wa.accentSoft : Wa.input,
+      child: trimmed.isEmpty
+          ? const Icon(Icons.person, color: Wa.icon)
+          : Text(
+              trimmed[0].toUpperCase(),
+              style: TextStyle(
+                color: active ? Wa.accent : Wa.title,
+                fontSize: 17,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+    );
+  }
+}
+
+class _AccountText extends StatelessWidget {
+  const _AccountText({
+    required this.email,
+    required this.detail,
+    this.bold = false,
+  });
+
+  final String email;
+  final String detail;
+  final bool bold;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    mainAxisSize: MainAxisSize.min,
+    children: <Widget>[
+      Text(
+        email,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          color: Wa.title,
+          fontSize: 15,
+          fontWeight: bold ? FontWeight.w600 : FontWeight.w400,
+        ),
+      ),
+      const SizedBox(height: 2),
+      Text(
+        detail,
+        style: const TextStyle(color: Wa.secondaryText, fontSize: 13),
+      ),
+    ],
   );
 }

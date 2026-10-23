@@ -1,5 +1,9 @@
+import 'dart:convert';
+
+import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../config/env.dart';
 import 'supabase_client.dart';
 
 /// Email + password auth against the existing Supabase project.
@@ -12,14 +16,8 @@ class AuthRepository {
 
   Stream<AuthState> get onAuthStateChange => db.auth.onAuthStateChange;
 
-  Future<void> signIn({
-    required String email,
-    required String password,
-  }) async {
-    await db.auth.signInWithPassword(
-      email: email.trim(),
-      password: password,
-    );
+  Future<void> signIn({required String email, required String password}) async {
+    await db.auth.signInWithPassword(email: email.trim(), password: password);
   }
 
   /// Creates a new account.
@@ -54,4 +52,41 @@ class AuthRepository {
   /// the phone out too, which the phone then reported as "your session
   /// expired". Local scope ends only this device's session.
   Future<void> signOut() => db.auth.signOut(scope: SignOutScope.local);
+
+  /// Makes a saved account the one in use, from its refresh token. Supabase
+  /// issues a fresh pair and emits a signed-in event for that user.
+  Future<void> switchTo(String refreshToken) async {
+    await db.auth.setSession(refreshToken);
+  }
+
+  /// Ends a saved account that is not the one in use, without touching the
+  /// session that is: trade its refresh token for an access token, then sign
+  /// that one out (this device only). Best effort — if it fails the token
+  /// just lapses on its own.
+  Future<void> revoke(String refreshToken) async {
+    final base = Env.supabaseUrl;
+    final headers = <String, String>{
+      'apikey': Env.supabaseAnonKey,
+      'Content-Type': 'application/json',
+    };
+    try {
+      final token = await http.post(
+        Uri.parse('$base/auth/v1/token?grant_type=refresh_token'),
+        headers: headers,
+        body: jsonEncode(<String, String>{'refresh_token': refreshToken}),
+      );
+      if (token.statusCode != 200) return;
+      final access = (jsonDecode(token.body) as Map)['access_token'];
+      if (access is! String) return;
+      await http.post(
+        Uri.parse('$base/auth/v1/logout?scope=local'),
+        headers: <String, String>{
+          ...headers,
+          'Authorization': 'Bearer $access',
+        },
+      );
+    } catch (_) {
+      // Offline or refused: nothing more to do.
+    }
+  }
 }
