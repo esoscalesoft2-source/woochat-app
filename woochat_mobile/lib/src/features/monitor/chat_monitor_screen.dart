@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
@@ -8,18 +9,6 @@ import '../../data/chat_monitor_repository.dart';
 import '../../models/tenant_context.dart';
 import '../../theme/wa_colors.dart';
 import '../chat/chat_route.dart';
-
-/// Opens the Chat Monitor over the current screen.
-Future<void> showChatMonitorScreen(
-  BuildContext context, {
-  required TenantContext tenantContext,
-}) {
-  return Navigator.of(context).push<void>(
-    MaterialPageRoute<void>(
-      builder: (context) => ChatMonitorScreen(tenantContext: tenantContext),
-    ),
-  );
-}
 
 /// Chat Monitor, as on the website: an AI reviewer of the chats, run when the
 /// admin taps Check chats. It gives each chat statuses with a reason and a
@@ -73,8 +62,10 @@ class _ChatMonitorScreenState extends State<ChatMonitorScreen> {
   String? _taking;
   _IssueView _view = _IssueView.open;
   String? _person;
-  String? _statusFilter;
-  int _minSeverity = 0;
+
+  /// The chats, for a status page left open while the monitor refreshes.
+  final ValueNotifier<List<MonitorChatRow>> _rowsNow =
+      ValueNotifier<List<MonitorChatRow>>(const []);
 
   Timer? _poll;
 
@@ -90,6 +81,7 @@ class _ChatMonitorScreenState extends State<ChatMonitorScreen> {
   @override
   void dispose() {
     _poll?.cancel();
+    _rowsNow.dispose();
     super.dispose();
   }
 
@@ -116,6 +108,7 @@ class _ChatMonitorScreenState extends State<ChatMonitorScreen> {
       setState(() {
         _statuses = results[0]! as List<MonitorStatus>;
         _rows = results[1]! as List<MonitorChatRow>;
+        _rowsNow.value = _rows;
         _issues = issues;
         _run = results[3] as MonitorRun?;
         _access = access;
@@ -198,6 +191,23 @@ class _ChatMonitorScreenState extends State<ChatMonitorScreen> {
   void _openChat(String chatId) {
     Navigator.of(context).push<void>(
       MaterialPageRoute<void>(builder: (_) => ChatRoute(chatId: chatId)),
+    );
+  }
+
+  /// A status's chats on a page of their own ([key] null: every chat). A
+  /// chat opens over it, so Back comes to the page, not the list.
+  void _openStatus(String? key) {
+    Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => _StatusPage(
+          title: key == null ? 'All chats' : _statusName(key),
+          statusKey: key,
+          rows: _rowsNow,
+          statusName: _statusName,
+          onOpen: _openChat,
+          onRefresh: _loadAll,
+        ),
+      ),
     );
   }
 
@@ -414,98 +424,56 @@ class _ChatMonitorScreenState extends State<ChatMonitorScreen> {
 
   // ---- Chats by status ---------------------------------------------------
 
+  /// Every status with how many chats it has, as MindFlo lists projects:
+  /// tap one for its own page.
   List<Widget> _chatsSection() {
-    final counts = <String, int>{};
+    final byStatus = <String, List<MonitorChatRow>>{};
     for (final row in _rows) {
       for (final key in row.statuses) {
-        counts[key] = (counts[key] ?? 0) + 1;
+        (byStatus[key] ??= <MonitorChatRow>[]).add(row);
       }
     }
-    final shown = _rows
-        .where(
-          (r) =>
-              (_statusFilter == null || r.statuses.contains(_statusFilter)) &&
-              r.severity >= _minSeverity,
-        )
-        .toList();
 
     return <Widget>[
-      Row(
-        children: <Widget>[
-          const Expanded(
-            child: Text(
-              'By status',
-              style: TextStyle(color: Wa.secondaryText, fontSize: 13),
-            ),
-          ),
-          PopupMenuButton<int>(
-            initialValue: _minSeverity,
-            color: Wa.sheet,
-            onSelected: (value) => setState(() => _minSeverity = value),
-            itemBuilder: (_) => <PopupMenuEntry<int>>[
-              for (final (value, label) in _severityFilters)
-                PopupMenuItem<int>(
-                  value: value,
-                  child: Text(label, style: const TextStyle(color: Wa.title)),
-                ),
-            ],
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                Text(
-                  _severityFilters.firstWhere((f) => f.$1 == _minSeverity).$2,
-                  style: const TextStyle(color: Wa.accent, fontSize: 13),
-                ),
-                const Icon(Icons.arrow_drop_down, color: Wa.accent),
-              ],
-            ),
-          ),
-        ],
+      const Text(
+        'By status',
+        style: TextStyle(color: Wa.secondaryText, fontSize: 13),
       ),
       const SizedBox(height: 8),
-      SizedBox(
-        height: 54,
-        child: ListView(
-          scrollDirection: Axis.horizontal,
-          children: <Widget>[
-            _CountChip(
-              count: _rows.length,
-              label: 'All chats',
-              selected: _statusFilter == null,
-              onTap: () => setState(() => _statusFilter = null),
-            ),
-            for (final status in _statuses.where((s) => s.enabled))
-              _CountChip(
-                count: counts[status.key] ?? 0,
-                label: status.name,
-                selected: _statusFilter == status.key,
-                onTap: () => setState(
-                  () => _statusFilter = _statusFilter == status.key
-                      ? null
-                      : status.key,
-                ),
-              ),
-          ],
-        ),
-      ),
-      const SizedBox(height: 10),
-      if (shown.isEmpty)
+      if (_rows.isEmpty)
         _Empty(
-          _rows.isNotEmpty
-              ? 'No chats with this status.'
-              : _isAdmin
+          _isAdmin
               ? 'Nothing yet — tap Check chats to review the chats with new '
                     'messages.'
               : 'Nothing for your chats yet — it fills in when your admin '
                     'runs a check.',
         )
       else
-        for (final row in shown)
-          _ChatCard(
-            row: row,
-            statuses: row.statuses.map(_statusName).toList(),
-            onOpen: () => _openChat(row.chatId),
+        Container(
+          decoration: BoxDecoration(
+            color: Wa.header,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Wa.divider),
           ),
+          clipBehavior: Clip.antiAlias,
+          child: Column(
+            children: <Widget>[
+              _StatusRow(
+                name: 'All chats',
+                rows: _rows,
+                onTap: () => _openStatus(null),
+              ),
+              for (final status in _statuses.where((s) => s.enabled)) ...[
+                const Divider(height: 1, color: Wa.divider),
+                _StatusRow(
+                  name: status.name,
+                  rows: byStatus[status.key] ?? const <MonitorChatRow>[],
+                  onTap: () => _openStatus(status.key),
+                ),
+              ],
+            ],
+          ),
+        ),
     ];
   }
 }
@@ -1042,54 +1010,282 @@ class _TallyChip extends StatelessWidget {
   );
 }
 
-class _CountChip extends StatelessWidget {
-  const _CountChip({
-    required this.count,
-    required this.label,
-    required this.selected,
+/// One status in the list: its name, how many chats, and how many of them
+/// are urgent or due today. A status with no chats is dimmed and stays shut.
+class _StatusRow extends StatelessWidget {
+  const _StatusRow({
+    required this.name,
+    required this.rows,
     required this.onTap,
   });
 
-  final int count;
-  final String label;
-  final bool selected;
+  final String name;
+  final List<MonitorChatRow> rows;
   final VoidCallback onTap;
 
   @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(right: 6),
-    child: GestureDetector(
-      onTap: onTap,
-      child: Opacity(
-        opacity: count == 0 && !selected ? 0.5 : 1,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          decoration: BoxDecoration(
-            color: selected ? Wa.accentSoft : Wa.header,
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: selected ? Wa.accent : Wa.divider),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisAlignment: MainAxisAlignment.center,
+  Widget build(BuildContext context) {
+    final bySeverity = List<int>.filled(4, 0);
+    for (final row in rows) {
+      bySeverity[row.severity.clamp(0, 3)]++;
+    }
+    final mix = <(int, String)>[
+      if (bySeverity[3] > 0) (3, '${bySeverity[3]} urgent'),
+      if (bySeverity[2] > 0) (2, '${bySeverity[2]} today'),
+      if (bySeverity[1] > 0) (1, '${bySeverity[1]} worth a look'),
+    ];
+    final empty = rows.isEmpty;
+    return Opacity(
+      opacity: empty ? 0.5 : 1,
+      child: InkWell(
+        onTap: empty ? null : onTap,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
+          child: Row(
             children: <Widget>[
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Text(
+                      name,
+                      style: const TextStyle(
+                        color: Wa.title,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    if (mix.isNotEmpty) ...<Widget>[
+                      const SizedBox(height: 3),
+                      Text.rich(
+                        TextSpan(
+                          children: <InlineSpan>[
+                            for (final (i, (sev, text)) in mix.indexed) ...[
+                              if (i > 0)
+                                const TextSpan(
+                                  text: '  ·  ',
+                                  style: TextStyle(color: Wa.mutedText),
+                                ),
+                              TextSpan(
+                                text: text,
+                                style: TextStyle(color: _severityColors[sev]),
+                              ),
+                            ],
+                          ],
+                        ),
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
               Text(
-                '$count',
+                '${rows.length}',
                 style: const TextStyle(
                   color: Wa.title,
-                  fontSize: 16,
+                  fontSize: 17,
                   fontWeight: FontWeight.w600,
                 ),
               ),
-              Text(
-                label,
-                style: const TextStyle(color: Wa.secondaryText, fontSize: 11.5),
+              Icon(
+                Icons.chevron_right,
+                color: empty ? Colors.transparent : Wa.secondaryText,
               ),
             ],
           ),
         ),
       ),
-    ),
+    );
+  }
+}
+
+/// One status's chats, on a page of their own (as a project's tasks are in
+/// MindFlo): search by customer, the severity filter, and each chat opens
+/// over it, so Back comes here. It follows the monitor's refreshes while
+/// it's open.
+class _StatusPage extends StatefulWidget {
+  const _StatusPage({
+    required this.title,
+    required this.statusKey,
+    required this.rows,
+    required this.statusName,
+    required this.onOpen,
+    required this.onRefresh,
+  });
+
+  final String title;
+
+  /// Null: every chat.
+  final String? statusKey;
+  final ValueListenable<List<MonitorChatRow>> rows;
+  final String Function(String key) statusName;
+  final ValueChanged<String> onOpen;
+  final Future<void> Function() onRefresh;
+
+  @override
+  State<_StatusPage> createState() => _StatusPageState();
+}
+
+class _StatusPageState extends State<_StatusPage> {
+  final TextEditingController _search = TextEditingController();
+  int _minSeverity = 0;
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(
+    BuildContext context,
+  ) => ValueListenableBuilder<List<MonitorChatRow>>(
+    valueListenable: widget.rows,
+    builder: (context, rows, _) {
+      final key = widget.statusKey;
+      final inStatus = <MonitorChatRow>[
+        for (final row in rows)
+          if (key == null || row.statuses.contains(key)) row,
+      ];
+      final query = _search.text.trim().toLowerCase();
+      final shown = inStatus
+          .where(
+            (r) =>
+                r.severity >= _minSeverity &&
+                (query.isEmpty || r.name.toLowerCase().contains(query)),
+          )
+          .toList();
+      return Scaffold(
+        backgroundColor: Wa.background,
+        appBar: AppBar(
+          backgroundColor: Wa.background,
+          foregroundColor: Wa.title,
+          elevation: 0,
+          titleSpacing: 0,
+          title: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Text(
+                widget.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 17),
+              ),
+              Text(
+                inStatus.length == 1 ? '1 chat' : '${inStatus.length} chats',
+                style: const TextStyle(color: Wa.secondaryText, fontSize: 12.5),
+              ),
+            ],
+          ),
+        ),
+        body: RefreshIndicator(
+          color: Wa.accent,
+          onRefresh: widget.onRefresh,
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
+            children: <Widget>[
+              Row(
+                children: <Widget>[
+                  Expanded(
+                    child: TextField(
+                      controller: _search,
+                      onChanged: (_) => setState(() {}),
+                      style: const TextStyle(color: Wa.title, fontSize: 14),
+                      cursorColor: Wa.accent,
+                      decoration: InputDecoration(
+                        hintText: 'Search customer',
+                        hintStyle: const TextStyle(
+                          color: Wa.secondaryText,
+                          fontSize: 14,
+                        ),
+                        prefixIcon: const Icon(
+                          Icons.search,
+                          size: 18,
+                          color: Wa.secondaryText,
+                        ),
+                        prefixIconConstraints: const BoxConstraints(
+                          minWidth: 38,
+                        ),
+                        suffixIcon: query.isEmpty
+                            ? null
+                            : IconButton(
+                                tooltip: 'Clear search',
+                                icon: const Icon(
+                                  Icons.close,
+                                  size: 18,
+                                  color: Wa.secondaryText,
+                                ),
+                                onPressed: () => setState(_search.clear),
+                              ),
+                        filled: true,
+                        fillColor: Wa.chipInactiveBackground,
+                        isDense: true,
+                        contentPadding: const EdgeInsets.symmetric(vertical: 9),
+                        border: _searchBorder,
+                        enabledBorder: _searchBorder,
+                        focusedBorder: _searchBorder,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  PopupMenuButton<int>(
+                    initialValue: _minSeverity,
+                    color: Wa.sheet,
+                    tooltip: 'Severity',
+                    onSelected: (value) => setState(() => _minSeverity = value),
+                    itemBuilder: (_) => <PopupMenuEntry<int>>[
+                      for (final (value, label) in _severityFilters)
+                        PopupMenuItem<int>(
+                          value: value,
+                          child: Text(
+                            label,
+                            style: const TextStyle(color: Wa.title),
+                          ),
+                        ),
+                    ],
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        Text(
+                          _severityFilters
+                              .firstWhere((f) => f.$1 == _minSeverity)
+                              .$2,
+                          style: const TextStyle(
+                            color: Wa.accent,
+                            fontSize: 13,
+                          ),
+                        ),
+                        const Icon(Icons.arrow_drop_down, color: Wa.accent),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              if (shown.isEmpty)
+                _Empty(
+                  inStatus.isEmpty
+                      ? 'No chats with this status right now.'
+                      : 'No chats match.',
+                )
+              else
+                for (final row in shown)
+                  _ChatCard(
+                    row: row,
+                    statuses: row.statuses.map(widget.statusName).toList(),
+                    onOpen: () => widget.onOpen(row.chatId),
+                  ),
+            ],
+          ),
+        ),
+      );
+    },
+  );
+
+  static final OutlineInputBorder _searchBorder = OutlineInputBorder(
+    borderRadius: BorderRadius.circular(8),
+    borderSide: BorderSide.none,
   );
 }
 
