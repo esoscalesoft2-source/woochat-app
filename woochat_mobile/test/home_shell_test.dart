@@ -11,16 +11,15 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
 
     await tester.pumpWidget(
-      const MaterialApp(
-        home: Scaffold(bottomNavigationBar: HomeNavBar()),
-      ),
+      const MaterialApp(home: Scaffold(bottomNavigationBar: HomeNavBar())),
     );
     await tester.pump();
   }
 
-  test('Chats leads the destination list', () {
+  test('Chats leads the destination list, Chat Monitor beside it', () {
     expect(HomeNavBar.destinations.first.label, 'Chats');
-    expect(HomeNavBar.destinations[1].label, 'Dashboard');
+    expect(HomeNavBar.destinations[1].label, 'Monitor');
+    expect(HomeNavBar.destinations[2].label, 'Dashboard');
   });
 
   test('the active tab is derived from the enabled destination', () {
@@ -32,13 +31,13 @@ void main() {
     );
   });
 
-  test('Chats is the only screen; More opens a sheet', () {
+  test('Chats and Monitor are screens; More opens a sheet', () {
     final enabled = HomeNavBar.destinations
         .where((destination) => destination.enabled)
         .map((destination) => destination.label)
         .toList();
 
-    expect(enabled, <String>['Chats', 'More']);
+    expect(enabled, <String>['Chats', 'Monitor', 'More']);
     expect(
       HomeNavBar.destinations.where((d) => d.opensSheet).map((d) => d.label),
       <String>['More'],
@@ -66,17 +65,29 @@ void main() {
     expect(colourOf('Dashboard'), isNot(Wa.navActive));
   });
 
-  testWidgets('a disabled tab explains itself instead of navigating',
-      (tester) async {
+  testWidgets('tapping Monitor asks the shell to switch to it', (tester) async {
+    int? picked;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          bottomNavigationBar: HomeNavBar(onSelect: (i) => picked = i),
+        ),
+      ),
+    );
+    await tester.tap(find.text('Monitor'));
+    await tester.pump();
+    expect(picked, 1);
+  });
+
+  testWidgets('a disabled tab explains itself instead of navigating', (
+    tester,
+  ) async {
     await pumpBar(tester);
 
     await tester.tap(find.text('Dashboard'));
     await tester.pump();
 
     expect(tester.takeException(), isNull);
-    expect(
-      find.text('Dashboard arrives in a later phase.'),
-      findsOneWidget,
-    );
+    expect(find.text('Dashboard arrives in a later phase.'), findsOneWidget);
   });
 }

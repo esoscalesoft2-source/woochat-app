@@ -4,6 +4,8 @@ import 'package:woochat_mobile/src/core/constants.dart';
 import 'package:woochat_mobile/src/features/shell/home_nav_bar.dart';
 import 'package:woochat_mobile/src/features/shell/more_sheet.dart';
 import 'package:woochat_mobile/src/models/tenant_context.dart';
+import 'package:woochat_mobile/src/state/session_controller.dart';
+import 'package:woochat_mobile/src/state/session_scope.dart';
 
 void main() {
   const tenant = TenantContext(
@@ -13,18 +15,16 @@ void main() {
     role: AppRole.admin,
   );
 
-  Future<int> openMore(WidgetTester tester) async {
-    var signOuts = 0;
+  Future<void> openMore(WidgetTester tester) async {
     await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: const SizedBox.expand(),
-          bottomNavigationBar: Builder(
-            builder: (context) => HomeNavBar(
-              onMore: () => showMoreSheet(
-                context,
-                tenantContext: tenant,
-                onSignOut: () async => signOuts++,
+      SessionScope(
+        controller: SessionController(),
+        child: MaterialApp(
+          home: Scaffold(
+            body: const SizedBox.expand(),
+            bottomNavigationBar: Builder(
+              builder: (context) => HomeNavBar(
+                onMore: () => showMoreSheet(context, tenantContext: tenant),
               ),
             ),
           ),
@@ -33,51 +33,28 @@ void main() {
     );
     await tester.tap(find.text('More'));
     await tester.pumpAndSettle();
-    return signOuts;
   }
 
-  testWidgets('More shows who is signed in and offers Sign out',
-      (tester) async {
+  testWidgets('More lists the accounts at once, the one in use ticked', (
+    tester,
+  ) async {
     await openMore(tester);
 
     expect(find.text('esoteam7@gmail.com'), findsOneWidget);
     expect(find.text('Admin'), findsOneWidget);
-    expect(find.byKey(const ValueKey<String>('more-sign-out')), findsOneWidget);
+    expect(find.byIcon(Icons.check_circle), findsOneWidget);
+    // No arrow to open the list: it is already open.
+    expect(find.byIcon(Icons.keyboard_arrow_down), findsNothing);
+    expect(
+      find.byKey(const ValueKey<String>('more-add-account')),
+      findsOneWidget,
+    );
   });
 
-  testWidgets('Sign out asks first, and Cancel keeps you in', (tester) async {
-    var signOuts = 0;
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: const SizedBox.expand(),
-          bottomNavigationBar: Builder(
-            builder: (context) => HomeNavBar(
-              onMore: () => showMoreSheet(
-                context,
-                tenantContext: tenant,
-                onSignOut: () async => signOuts++,
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-    await tester.tap(find.text('More'));
-    await tester.pumpAndSettle();
+  testWidgets('Sign out is not in More — it lives in Settings', (tester) async {
+    await openMore(tester);
 
-    await tester.tap(find.byKey(const ValueKey<String>('more-sign-out')));
-    await tester.pumpAndSettle();
-    expect(find.text('Sign out?'), findsOneWidget);
-
-    await tester.tap(find.text('Cancel'));
-    await tester.pumpAndSettle();
-    expect(signOuts, 0);
-
-    await tester.tap(find.byKey(const ValueKey<String>('more-sign-out')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilledButton, 'Sign out'));
-    await tester.pumpAndSettle();
-    expect(signOuts, 1);
+    expect(find.byKey(const ValueKey<String>('more-sign-out')), findsNothing);
+    expect(find.text('Sign out'), findsNothing);
   });
 }
