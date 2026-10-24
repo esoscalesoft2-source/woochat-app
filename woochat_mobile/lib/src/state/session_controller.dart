@@ -153,18 +153,25 @@ class SessionController extends ChangeNotifier {
   /// Saves [session]'s account and latest refresh token, then reloads the
   /// list the switcher shows.
   Future<void> _remember(Session? session, {String? roleLabel}) async {
-    if (session != null) {
-      final token = session.refreshToken;
-      if (token != null && token.isNotEmpty) {
-        await _accounts.upsert(
-          userId: session.user.id,
-          refreshToken: token,
-          email: session.user.email,
-          roleLabel: roleLabel,
-        );
+    try {
+      if (session != null) {
+        final token = session.refreshToken;
+        if (token != null && token.isNotEmpty) {
+          await _accounts.upsert(
+            userId: session.user.id,
+            refreshToken: token,
+            email: session.user.email,
+            roleLabel: roleLabel,
+          );
+        }
       }
+      _saved = await _accounts.all();
+    } catch (error) {
+      // The switcher's list is a convenience; failing to keep it must never
+      // get in the way of signing in.
+      debugPrint('Saved accounts unavailable: $error');
+      return;
     }
-    _saved = await _accounts.all();
     notifyListeners();
   }
 
@@ -247,6 +254,24 @@ class SessionController extends ChangeNotifier {
     if (account != null) unawaited(_auth.revoke(account.refreshToken));
   }
 
+  /// The saved accounts, or none when they can't be read — signing out
+  /// must still work.
+  Future<List<SavedAccount>> _savedOrNone() async {
+    try {
+      return await _accounts.all();
+    } catch (_) {
+      return const <SavedAccount>[];
+    }
+  }
+
+  Future<void> _forgetQuietly(String userId) async {
+    try {
+      await _accounts.remove(userId);
+    } catch (_) {
+      // Nothing saved to forget.
+    }
+  }
+
   /// Per-tenant data kept on the phone; the next account may not share it.
   void _clearTenantCaches() {
     unawaited(ApprovedTemplatesCache.instance.clear());
@@ -256,26 +281,29 @@ class SessionController extends ChangeNotifier {
   /// takes over; with none, the login screen.
   Future<void> signOut() async {
     final leaving = _userId;
-    if (leaving != null) await _accounts.remove(leaving);
-    final next = (await _accounts.all()).firstOrNull;
+    if (leaving != null) await _forgetQuietly(leaving);
+    final next = (await _savedOrNone()).firstOrNull;
+    var signedOut = false;
     if (next != null) {
       _handingOver = true;
       try {
         await _auth.signOut();
+        signedOut = true;
         _clearTenantCaches();
         await _auth.switchTo(next.refreshToken);
         return;
       } on AuthException {
-        await _accounts.remove(next.userId);
+        // The next one's sign-in had lapsed: forget it, end up signed out.
+        await _forgetQuietly(next.userId);
       } finally {
         _handingOver = false;
-        _saved = await _accounts.all();
+        _saved = await _savedOrNone();
         notifyListeners();
       }
     }
 
-    await _auth.signOut();
-    _saved = await _accounts.all();
+    if (!signedOut) await _auth.signOut();
+    _saved = await _savedOrNone();
     // The saved template list is this tenant's; the next sign-in may not
     // be them.
     _clearTenantCaches();
