@@ -677,133 +677,161 @@ class _IssueCard extends StatelessWidget {
         : issue.state == IssueState.fixed
         ? Wa.accent
         : Wa.title;
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
+    final radius = BorderRadius.circular(12);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Material(
         color: Wa.header,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: due.late
-              ? Wa.scheduleFailed.withValues(alpha: 0.5)
-              : Wa.divider,
+        shape: RoundedRectangleBorder(
+          borderRadius: radius,
+          side: BorderSide(
+            color: due.late
+                ? Wa.scheduleFailed.withValues(alpha: 0.5)
+                : Wa.divider,
+          ),
         ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              Expanded(
-                child: Column(
+        child: InkWell(
+          // The whole card opens the chat, not only the Open button. A
+          // teammate's issue opens through Take over instead.
+          onTap: canTakeOver ? null : onOpen,
+          borderRadius: radius,
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: <Widget>[
-                    Text(
-                      issue.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Wa.title,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text.rich(
-                      TextSpan(
-                        children: <InlineSpan>[
-                          TextSpan(
-                            text: statuses,
-                            style: const TextStyle(fontWeight: FontWeight.w600),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: <Widget>[
+                          Text(
+                            issue.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Wa.title,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
-                          TextSpan(
-                            text: ' · $who',
-                            style: const TextStyle(color: Wa.secondaryText),
+                          const SizedBox(height: 2),
+                          Text.rich(
+                            TextSpan(
+                              children: <InlineSpan>[
+                                TextSpan(
+                                  text: statuses,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                TextSpan(
+                                  text: ' · $who',
+                                  style: const TextStyle(
+                                    color: Wa.secondaryText,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            style: const TextStyle(
+                              color: Wa.title,
+                              fontSize: 12.5,
+                            ),
                           ),
                         ],
                       ),
-                      style: const TextStyle(color: Wa.title, fontSize: 12.5),
                     ),
+                    const SizedBox(width: 8),
+                    if (canTakeOver)
+                      OutlinedButton.icon(
+                        onPressed: taking || issue.state != IssueState.open
+                            ? null
+                            : onTakeOver,
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Wa.accent,
+                          side: const BorderSide(color: Wa.accent),
+                          visualDensity: VisualDensity.compact,
+                          minimumSize: const Size(0, 34),
+                        ),
+                        icon: taking
+                            ? const SizedBox(
+                                width: 12,
+                                height: 12,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.pan_tool_outlined, size: 16),
+                        label: const Text('Take over'),
+                      )
+                    else
+                      TextButton.icon(
+                        onPressed: onOpen,
+                        style: TextButton.styleFrom(
+                          foregroundColor: Wa.accent,
+                          visualDensity: VisualDensity.compact,
+                          minimumSize: const Size(0, 34),
+                        ),
+                        icon: const Icon(Icons.chat_outlined, size: 16),
+                        label: const Text('Open'),
+                      ),
                   ],
                 ),
-              ),
-              const SizedBox(width: 8),
-              if (canTakeOver)
-                OutlinedButton.icon(
-                  onPressed: taking || issue.state != IssueState.open
-                      ? null
-                      : onTakeOver,
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: Wa.accent,
-                    side: const BorderSide(color: Wa.accent),
-                    visualDensity: VisualDensity.compact,
-                    minimumSize: const Size(0, 34),
+                if (issue.suggestion != null) ...<Widget>[
+                  const SizedBox(height: 6),
+                  Text(
+                    '→ ${issue.suggestion}',
+                    style: const TextStyle(color: Wa.accent, fontSize: 12.5),
                   ),
-                  icon: taking
-                      ? const SizedBox(
-                          width: 12,
-                          height: 12,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.pan_tool_outlined, size: 16),
-                  label: const Text('Take over'),
-                )
-              else
-                TextButton.icon(
-                  onPressed: onOpen,
-                  style: TextButton.styleFrom(
-                    foregroundColor: Wa.accent,
-                    visualDensity: VisualDensity.compact,
-                    minimumSize: const Size(0, 34),
-                  ),
-                  icon: const Icon(Icons.chat_outlined, size: 16),
-                  label: const Text('Open'),
+                ],
+                const SizedBox(height: 8),
+                Row(
+                  children: <Widget>[
+                    Icon(
+                      issue.state == IssueState.fixed
+                          ? Icons.check_circle_outline
+                          : due.late
+                          ? Icons.warning_amber_rounded
+                          : Icons.schedule,
+                      size: 15,
+                      color: dueColor,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      due.text,
+                      style: TextStyle(color: dueColor, fontSize: 12.5),
+                    ),
+                    if (issue.deadlineAt != null)
+                      Text(
+                        '  ·  by ${_when.format(issue.deadlineAt!)}',
+                        style: const TextStyle(
+                          color: Wa.mutedText,
+                          fontSize: 12,
+                        ),
+                      ),
+                  ],
                 ),
-            ],
-          ),
-          if (issue.suggestion != null) ...<Widget>[
-            const SizedBox(height: 6),
-            Text(
-              '→ ${issue.suggestion}',
-              style: const TextStyle(color: Wa.accent, fontSize: 12.5),
-            ),
-          ],
-          const SizedBox(height: 8),
-          Row(
-            children: <Widget>[
-              Icon(
-                issue.state == IssueState.fixed
-                    ? Icons.check_circle_outline
-                    : due.late
-                    ? Icons.warning_amber_rounded
-                    : Icons.schedule,
-                size: 15,
-                color: dueColor,
-              ),
-              const SizedBox(width: 4),
-              Text(due.text, style: TextStyle(color: dueColor, fontSize: 12.5)),
-              if (issue.deadlineAt != null)
+                const SizedBox(height: 4),
                 Text(
-                  '  ·  by ${_when.format(issue.deadlineAt!)}',
-                  style: const TextStyle(color: Wa.mutedText, fontSize: 12),
+                  issue.verdict ?? 'Not checked yet',
+                  style: TextStyle(
+                    color: issue.verdict == null
+                        ? Wa.mutedText
+                        : Wa.secondaryText,
+                    fontSize: 12.5,
+                  ),
                 ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          Text(
-            issue.verdict ?? 'Not checked yet',
-            style: TextStyle(
-              color: issue.verdict == null ? Wa.mutedText : Wa.secondaryText,
-              fontSize: 12.5,
+                if (issue.checkedAt != null)
+                  Text(
+                    'checked ${_when.format(issue.checkedAt!)}',
+                    style: const TextStyle(color: Wa.mutedText, fontSize: 11.5),
+                  ),
+              ],
             ),
           ),
-          if (issue.checkedAt != null)
-            Text(
-              'checked ${_when.format(issue.checkedAt!)}',
-              style: const TextStyle(color: Wa.mutedText, fontSize: 11.5),
-            ),
-        ],
+        ),
       ),
     );
   }
